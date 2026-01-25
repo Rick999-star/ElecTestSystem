@@ -1,0 +1,17 @@
+# System files
+thumbs.db
+*.DS_Store
+
+# Logs
+*.log
+
+# Dependencies (if we add npm later)
+node_modules/
+.npm/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment variables
+.env

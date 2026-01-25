@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ElecTest System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#2563eb',
+                        secondary: '#475569',
+                        accent: '#0d9488',
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        [v-cloak] {
+            display: none !important;
+        }
+
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #2563eb;
+            width: 20px;
+            height: 20px;
+            -webkit-animation: spin 1s linear infinite;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        #error-display {
+            display: none;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #fef2f2;
+            border-top: 2px solid #ef4444;
+            color: #b91c1c;
+            padding: 1rem;
+            z-index: 9999;
+            font-family: monospace;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 text-gray-800 font-sans antialiased">
+    <div id="error-display"></div>
+    <script>
+        window.onerror = function (msg, url, line) {
+            var el = document.getElementById('error-display');
+            el.style.display = 'block';
+            el.innerHTML = '<strong>System Error:</strong> ' + msg + '<br><small>' + line + '</small>';
+            return false;
+        };
+    </script>
+
+    <div id="app" class="min-h-screen flex flex-col" v-cloak>
+        <header class="bg-white shadow-sm z-10 sticky top-0">
+            <div class="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
+                <h1 class="text-xl font-bold text-gray-800 tracking-tight flex items-center">
+                    <i class="fa-solid fa-bolt text-yellow-500 mr-2"></i>
+                    ElecTest System
+                </h1>
+                <div class="space-x-2">
+                    <button @click="switchView('admin')"
+                        :class="['px-3 py-1 rounded-full text-sm font-medium transition', currentView === 'admin' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200']">
+                        管理者
+                    </button>
+                    <button @click="switchView('examinee')"
+                        :class="['px-3 py-1 rounded-full text-sm font-medium transition', currentView === 'examinee' ? 'bg-accent text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200']">
+                        受験者
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <div v-if="isLoading" class="fixed inset-0 bg-white/80 z-50 flex items-center justify-center flex-col">
+            <div class="loader mb-2" style="width: 40px; height: 40px; border-width: 4px;"></div>
+            <p class="text-gray-600 font-medium">{{ loadingMessage }}</p>
+        </div>
+
+        <main class="flex-grow p-4 md:p-6">
+            <div class="max-w-3xl mx-auto w-full">
+
+                <div v-if="currentView === 'admin'" class="space-y-6">
+                    <div
+                        class="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                        <div>
+                            <h2 class="text-lg font-semibold text-gray-800">問題作成</h2>
+                            <p class="text-sm text-gray-500">スプレッドシートに保存されます</p>
+                        </div>
+                        <button @click="finalizeQuestions"
+                            class="bg-primary hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg shadow-md transition flex items-center gap-2">
+                            <i class="fa-solid fa-save"></i> 問題を保存・確定
+                        </button>
+                    </div>
+
+                    <div class="space-y-4">
+                        <div v-for="(q, index) in questions" :key="q.id"
+                            class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition">
+                            <div
+                                class="bg-gray-50 px-4 py-2 border-b border-gray-100 flex justify-between items-center">
+                                <span class="font-bold text-gray-600">Q{{ index + 1 }}</span>
+                                <button @click="removeQuestion(index)"
+                                    class="text-red-400 hover:text-red-600 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-50 transition">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                            <div class="p-5 space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">問題文</label>
+                                    <textarea v-model="q.text" rows="3"
+                                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary outline-none transition"></textarea>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">画像URL (任意)</label>
+                                        <input type="text" v-model="q.imageUrl"
+                                            class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-primary outline-none">
+                                    </div>
+                                    <div v-if="q.imageUrl"
+                                        class="mt-2 p-2 bg-gray-50 rounded border border-gray-200 inline-block w-full">
+                                        <p class="text-xs text-gray-500 mb-1">プレビュー:</p>
+                                        <img :src="processImageUrl(q.imageUrl)" alt="Preview"
+                                            class="h-32 object-contain rounded" referrerpolicy="no-referrer"
+                                            @error="handleImageError">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">配点</label>
+                                        <input type="number" v-model.number="q.points"
+                                            class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-primary outline-none">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <button @click="addQuestion"
+                        class="w-full py-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-primary hover:text-primary hover:bg-blue-50 transition flex flex-col items-center justify-center gap-2">
+                        <i class="fa-solid fa-circle-plus text-2xl"></i>問題を追加
+                    </button>
+                    <div class="h-10"></div>
+                </div>
+
+                <div v-else-if="currentView === 'examinee'" class="space-y-6">
+                    <div v-if="testResult" class="space-y-6">
+                        <div class="bg-white rounded-xl shadow-lg border border-teal-100 p-8 text-center">
+                            <i class="fa-solid fa-trophy text-5xl text-yellow-400 mb-4"></i>
+                            <h2 class="text-2xl font-bold text-gray-800">試験終了</h2>
+                            <p class="text-gray-500 mt-2">お疲れ様でした。採点結果は以下の通りです。</p>
+                            <div class="mt-6 text-4xl font-black text-primary">
+                                {{ testResult.totalScore }} <span class="text-lg text-gray-400 font-normal">点</span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-4">
+                            <h3 class="font-bold text-gray-700 text-lg">詳細フィードバック</h3>
+                            <div v-for="(res, idx) in testResult.results" :key="idx"
+                                class="bg-white rounded-lg p-5 border border-gray-200">
+                                <div class="flex justify-between mb-2">
+                                    <span class="font-bold text-gray-600">Q{{ idx + 1 }}</span>
+                                    <span class="font-bold" :class="res.score > 0 ? 'text-primary' : 'text-red-500'">{{
+                                        res.score }}点</span>
+                                </div>
+                                <p class="text-gray-700 bg-gray-50 p-3 rounded">{{ res.reason }}</p>
+                            </div>
+                        </div>
+                        <button @click="resetTest"
+                            class="w-full bg-gray-600 text-white py-3 rounded-lg hover:bg-gray-700 transition">終了して戻る</button>
+                    </div>
+
+                    <div v-else class="space-y-6">
+                        <div v-if="questions.length === 0" class="text-center py-10 text-gray-500">
+                            <p>現在、問題が登録されていません。</p>
+                        </div>
+
+                        <div v-else>
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-sm font-medium text-gray-500">問題 {{ currentQuestionIndex + 1 }} / {{
+                                    questions.length }}</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2.5 mb-6">
+                                <div class="bg-accent h-2.5 rounded-full transition-all duration-300"
+                                    :style="{ width: ((currentQuestionIndex + 1) / questions.length) * 100 + '%' }">
+                                </div>
+                            </div>
+
+                            <div v-if="currentQuestion"
+                                class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+                                <div class="p-6 md:p-8 space-y-6">
+                                    <h3 class="text-xl font-bold text-gray-800 leading-relaxed">{{ currentQuestion.text
+                                        }}</h3>
+
+                                    <div v-if="currentQuestion.imageUrl"
+                                        class="flex justify-center bg-gray-50 p-4 rounded-lg">
+                                        <img :src="processImageUrl(currentQuestion.imageUrl)"
+                                            class="max-h-64 object-contain rounded shadow-sm"
+                                            referrerpolicy="no-referrer" @error="handleImageError">
+                                    </div>
+
+                                    <div class="mt-6">
+                                        <label class="block text-sm font-semibold text-gray-700 mb-2">回答欄</label>
+                                        <textarea v-model="answers[currentQuestion.id]"
+                                            class="w-full h-48 px-4 py-3 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-accent outline-none transition resize-none"
+                                            placeholder="ここに記述してください..."></textarea>
+                                    </div>
+                                </div>
+                                <div
+                                    class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-between items-center">
+                                    <button @click="prevQuestion" :disabled="currentQuestionIndex === 0"
+                                        class="px-5 py-2 rounded-lg text-gray-600 hover:bg-gray-200 disabled:text-gray-300">
+                                        前へ
+                                    </button>
+
+                                    <button v-if="!isLastQuestion" @click="nextQuestion"
+                                        class="bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 px-6 py-2.5 rounded-lg shadow-sm font-medium transition">
+                                        次へ
+                                    </button>
+
+                                    <button v-else @click="submitTest"
+                                        class="bg-accent hover:bg-teal-700 text-white px-8 py-2.5 rounded-lg shadow-lg font-bold transition">
+                                        採点する
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.min.js"></script>
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                const currentView = ref('admin');
+                const isLoading = ref(false);
+                const loadingMessage = ref('');
+                const questions = ref([]);
+                const currentQuestionIndex = ref(0);
+                const answers = ref({});
+                const testResult = ref(null);
+
+                const isGasEnv = typeof google !== 'undefined' && google.script;
+
+                const runGas = (funcName, ...args) => {
+                    return new Promise((resolve, reject) => {
+                        if (!isGasEnv) {
+                            if (funcName === 'saveQuestions') return setTimeout(() => resolve({ success: true }), 500);
+                            if (funcName === 'getQuestions') return setTimeout(() => resolve([{ id: '1', text: '(Local) Test Q', points: 10 }]), 500);
+                            if (funcName === 'submitAnswers') return setTimeout(() => resolve({ success: true, totalScore: 10, results: [{ score: 10, reason: 'Good' }] }), 1500);
+                            return resolve();
+                        }
+                        google.script.run
+                            .withSuccessHandler(res => resolve(res))
+                            .withFailureHandler(err => reject(err))
+                        [funcName](...args);
+                    });
+                };
+
+                const processImageUrl = (url) => {
+                    if (!url) return '';
+                    let match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                    if (!match) match = url.match(/id=([a-zA-Z0-9_-]+)/);
+                    if (match && match[1]) {
+                        return 'https://drive.google.com/uc?export=view&id=' + match[1];
+                    }
+                    return url;
+                };
+
+                const handleImageError = (e) => {
+                    console.error('Image load failed');
+                };
+
+                const loadQuestions = async () => {
+                    isLoading.value = true;
+                    loadingMessage.value = 'Loading questions...';
+                    try {
+                        const data = await runGas('getQuestions');
+                        questions.value = data || [];
+                        if (currentView.value === 'admin' && questions.value.length === 0) {
+                            addQuestion();
+                        }
+                    } catch (e) {
+                        alert('Error: ' + e);
+                    } finally {
+                        isLoading.value = false;
+                    }
+                };
+
+                const switchView = async (view) => {
+                    currentView.value = view;
+                    testResult.value = null;
+                    answers.value = {};
+                    currentQuestionIndex.value = 0;
+                    if (view === 'examinee' || view === 'admin') {
+                        await loadQuestions();
+                    }
+                };
+
+                const addQuestion = () => {
+                    questions.value.push({ id: Date.now().toString(), text: '', imageUrl: '', points: 10 });
+                };
+
+                const removeQuestion = (index) => {
+                    questions.value.splice(index, 1);
+                };
+
+                const finalizeQuestions = async () => {
+                    if (!confirm('Save questions?')) return;
+                    isLoading.value = true;
+                    loadingMessage.value = 'Saving...';
+                    try {
+                        const res = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value)));
+                        if (res.success) {
+                            alert('Saved!');
+                        } else {
+                            alert('Save failed: ' + res.message);
+                        }
+                    } catch (e) {
+                        alert('Error: ' + e);
+                    } finally {
+                        isLoading.value = false;
+                    }
+                };
+
+                const currentQuestion = computed(() => questions.value[currentQuestionIndex.value]);
+                const isLastQuestion = computed(() => currentQuestionIndex.value === questions.value.length - 1);
+
+                const nextQuestion = () => { if (!isLastQuestion.value) currentQuestionIndex.value++; };
+                const prevQuestion = () => { if (currentQuestionIndex.value > 0) currentQuestionIndex.value--; };
+
+                const submitTest = async () => {
+                    if (!confirm('Submit answers?')) return;
+                    isLoading.value = true;
+                    loadingMessage.value = 'Grading...';
+                    try {
+                        const res = await runGas('submitAnswers', JSON.parse(JSON.stringify(answers.value)));
+                        if (res.success) {
+                            testResult.value = res;
+                        } else {
+                            alert('Submit failed: ' + res.message);
+                        }
+                    } catch (e) {
+                        alert('Error: ' + e);
+                    } finally {
+                        isLoading.value = false;
+                    }
+                };
+
+                const resetTest = () => {
+                    testResult.value = null;
+                    answers.value = {};
+                    currentQuestionIndex.value = 0;
+                };
+
+                onMounted(() => {
+                    if (questions.value.length === 0) addQuestion();
+                });
+
+                return {
+                    currentView, isLoading, loadingMessage, questions, currentQuestionIndex,
+                    answers, testResult, currentQuestion, isLastQuestion,
+                    switchView, addQuestion, removeQuestion, finalizeQuestions,
+                    nextQuestion, prevQuestion, submitTest, resetTest,
+                    processImageUrl, handleImageError
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+
+</html>
