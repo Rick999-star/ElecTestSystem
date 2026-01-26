@@ -171,12 +171,13 @@ ${studentAnswer}
 
 【採点フォーマット（厳守）】
 以下のJSON形式のみを出力してください。Markdownのコードブロックは不要です。
+**注意: 数式などでバックスラッシュを使用する場合は、必ず "\\\\" (二重) にしてエスケープしてください。**
 {"score": 数値(0-${q.points}), "reason": "採点理由とフィードバック（100文字程度）"}
 `;
 
-            // 「limit: 0」のエラー (=そのモデルの権限なし) を避けるため、
-            // 誰でも使える標準モデルのエイリアス「gemini-flash-latest」を指定
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
+            // お客様のアカウントで利用可能なモデルリストに「1.5」が存在しないため、
+            // リストに存在し、かつ安定版である「gemini-2.0-flash-001」を指定します
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent?key=${apiKey}`;
             // 他の選択肢: gemini-2.5-pro, gemini-2.5-flash なども利用可能です
             const payload = {
                 contents: [{ parts: [{ text: prompt }] }]
@@ -201,8 +202,27 @@ ${studentAnswer}
             const text = data.candidates[0].content.parts[0].text;
 
             // JSONパース (GeminiがたまにMarkdownブロックを含めるため除去)
-            const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-            const assessment = JSON.parse(jsonStr);
+            // 1. Markdownのコードブロック記法 ```json ... ``` または ``` ... ``` を削除
+            let jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
+            // 2. JSONパース試行
+            let assessment;
+            try {
+                assessment = JSON.parse(jsonStr);
+            } catch (e) {
+                console.warn("JSON Parse Retry: " + jsonStr);
+                // パース失敗時、余計な文字が含まれている可能性があるので { } の範囲だけ抽出して再トライ
+                const match = jsonStr.match(/\{[\s\S]*\}/);
+                if (match) {
+                    try {
+                        assessment = JSON.parse(match[0]);
+                    } catch (e2) {
+                        // それでもダメならバックスラッシュを置換してトライ（危険だが救済措置）
+                        assessment = JSON.parse(match[0].replace(/\\/g, '\\\\'));
+                    }
+                }
+                if (!assessment) throw e; // それでもダメならエラーを投げる
+            }
 
             results.push({
                 questionId: q.id,
@@ -215,6 +235,10 @@ ${studentAnswer}
             // デバッグ用に詳細なエラーを表示
             results.push({ questionId: q.id, score: 0, reason: "採点エラー: " + apiError.toString() });
         }
+
+        // 有料プランになったため、待機時間を短縮 (5秒 -> 1秒)
+        // ※完全に0にすると突発的な大量アクセスでエラーになることがあるため、安全策で少しだけ待ちます
+        Utilities.sleep(1000);
     }
 
     return results;
