@@ -45,7 +45,7 @@ function saveQuestions(questions) {
 
         // 既存データをクリアしてヘッダーを設定
         sheet.clear();
-        const header = ['ID', 'Text', 'Image URL', 'Points', 'Criteria']; // Criteria追加
+        const header = ['ID', 'Text', 'Image URL', 'Points', 'Criteria', 'SubQuestionsJSON'];
         sheet.appendRow(header);
 
         // データ書き込み
@@ -55,9 +55,10 @@ function saveQuestions(questions) {
                 q.text,
                 q.imageUrl || '',
                 q.points,
-                q.criteria || '' // 基準がない場合は空文字
+                q.criteria || '',
+                q.subQuestions ? JSON.stringify(q.subQuestions) : '' // 小問をJSONとして保存
             ]);
-            sheet.getRange(2, 1, rows.length, 5).setValues(rows); // 4列->5列
+            sheet.getRange(2, 1, rows.length, 6).setValues(rows);
         }
 
         return { success: true, message: '問題を保存しました。' };
@@ -81,16 +82,38 @@ function getQuestions() {
         const lastRow = sheet.getLastRow();
         if (lastRow < 2) return []; // データがない場合
 
-        const data = sheet.getRange(2, 1, lastRow - 1, 5).getValues(); // 4列->5列
+        // 6列目まで取得するように変更 (Col F: SubQuestionsJSON)
+        // 既存シートが5列しかない場合のエラー回避のため、getRangeの列数はシートの最大列数などを考慮するのが安全だが、
+        // ここでは新規保存で列が増える前提とする。読み込み時に列が足りない場合は空文字が返ることを期待。
+        // SpreadsheetAppでは指定範囲がシート範囲外だとエラーになる可能性があるが、データがある範囲(getDataRange)を使う手もある。
+        // ここでは安全のため getDataRange を使いつつ、必要な部分をマップするアプローチに変更するか、
+        // あるいは6列固定で取得する。列が存在しない場合はエラーになるので、列数チェックを入れる。
+
+        const maxCols = sheet.getMaxColumns();
+        const numColsToGet = Math.min(6, maxCols); // 最大でも6列
+
+        const data = sheet.getRange(2, 1, lastRow - 1, numColsToGet).getValues();
 
         // オブジェクト配列に変換
-        return data.map(row => ({
-            id: row[0],
-            text: row[1],
-            imageUrl: row[2],
-            points: Number(row[3]),
-            criteria: row[4] || '' // 取得
-        }));
+        return data.map(row => {
+            let subQuestions = [];
+            if (row.length >= 6 && row[5]) {
+                try {
+                    subQuestions = JSON.parse(row[5]);
+                } catch (e) {
+                    console.warn("Failed to parse subQuestions JSON", e);
+                }
+            }
+
+            return {
+                id: row[0],
+                text: row[1],
+                imageUrl: row[2],
+                points: Number(row[3]),
+                criteria: row[4] || '',
+                subQuestions: subQuestions
+            };
+        });
     } catch (e) {
         console.error(e);
         // エラー時は空リストを返す（またはエラーをスロー）
@@ -100,7 +123,7 @@ function getQuestions() {
 
 /**
  * 回答の送信と採点
- * @param {Object} answers - { questionId: answerText, ... }
+ * @param {Object} answers - { questionId: answerText, ... } または { questionId: { subId: answerText, ... } }
  */
 function submitAnswers(answers) {
     try {
@@ -136,21 +159,42 @@ function _gradeWithGemini(questions, answers) {
 
     // APIキーがない場合はモック採点を行う（動作確認用）
     if (!apiKey) {
-        return questions.map(q => ({
-            questionId: q.id,
-            score: Math.floor(q.points * 0.8), // 仮の点数
-            reason: "（注意: Gemini APIキーが設定されていないため、モック採点結果を表示しています）"
-        }));
+        return questions.flatMap(q => {
+            if (q.subQuestions && q.subQuestions.length > 0) {
+                return q.subQuestions.map(sq => ({
+                    questionId: q.id,
+                    subQuestionId: sq.id,
+                    score: Math.floor(sq.points * 0.8),
+                    reason: "(Mock) Sub-question graded."
+                }));
+            } else {
+                return [{
+                    questionId: q.id,
+                    score: Math.floor(q.points * 0.8),
+                    reason: "(Mock) Graded."
+                }];
+            }
+        });
     }
 
-    // NOTE: クォータ制限等を考慮し、本来はForループで直列処理するか、バッチ処理APIを使うのが望ましい
-    // ここではシンプルに直列で処理します。
-
     for (const q of questions) {
+        // 小問がある場合の処理
+        if (q.subQuestions && q.subQuestions.length > 0) {
+            const result = _gradeSubQuestions(q, answers[q.id] || {}, apiKey);
+            if (result) results.push(...result);
+            // APIレート制限考慮
+            Utilities.sleep(1000);
+            continue;
+        }
+
+        // 従来の問題（小問なし）の処理
         const studentAnswer = answers[q.id] || "";
 
+        // 文字列でない場合(回答形式不正)への対応
+        const answerText = typeof studentAnswer === 'string' ? studentAnswer : JSON.stringify(studentAnswer);
+
         // 空欄の場合は0点
-        if (!studentAnswer.trim()) {
+        if (!answerText.trim()) {
             results.push({ questionId: q.id, score: 0, reason: "未回答" });
             continue;
         }
@@ -167,7 +211,7 @@ ${q.text}
 ${q.criteria ? q.criteria : '特になし（一般的な専門知識に基づいて採点してください）'}
 
 【学生の回答】
-${studentAnswer}
+${answerText}
 
 【採点フォーマット（厳守）】
 以下のJSON形式のみを出力してください。Markdownのコードブロックは不要です。
@@ -175,73 +219,140 @@ ${studentAnswer}
 {"score": 数値(0-${q.points}), "reason": "採点理由とフィードバック（100文字程度）"}
 `;
 
-            // お客様のアカウントで利用可能なモデルリストに「1.5」が存在しないため、
-            // リストに存在し、かつ安定版である「gemini-2.0-flash-001」を指定します
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent?key=${apiKey}`;
-            // 他の選択肢: gemini-2.5-pro, gemini-2.5-flash なども利用可能です
-            const payload = {
-                contents: [{ parts: [{ text: prompt }] }]
-            };
-
-            const options = {
-                'method': 'post',
-                'contentType': 'application/json',
-                'payload': JSON.stringify(payload),
-                'muteHttpExceptions': true // エラーレスポンスをハンドリングできるようにする
-            };
-
-            const response = UrlFetchApp.fetch(url, options);
-            const responseCode = response.getResponseCode();
-            const responseText = response.getContentText();
-
-            if (responseCode !== 200) {
-                throw new Error(`API Error (${responseCode}): ${responseText}`);
-            }
-
-            const data = JSON.parse(responseText);
-            const text = data.candidates[0].content.parts[0].text;
-
-            // JSONパース (GeminiがたまにMarkdownブロックを含めるため除去)
-            // 1. Markdownのコードブロック記法 ```json ... ``` または ``` ... ``` を削除
-            let jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-
-            // 2. JSONパース試行
-            let assessment;
-            try {
-                assessment = JSON.parse(jsonStr);
-            } catch (e) {
-                console.warn("JSON Parse Retry: " + jsonStr);
-                // パース失敗時、余計な文字が含まれている可能性があるので { } の範囲だけ抽出して再トライ
-                const match = jsonStr.match(/\{[\s\S]*\}/);
-                if (match) {
-                    try {
-                        assessment = JSON.parse(match[0]);
-                    } catch (e2) {
-                        // それでもダメならバックスラッシュを置換してトライ（危険だが救済措置）
-                        assessment = JSON.parse(match[0].replace(/\\/g, '\\\\'));
-                    }
-                }
-                if (!assessment) throw e; // それでもダメならエラーを投げる
-            }
-
+            const aiResponse = _callGeminiApi(apiKey, prompt);
             results.push({
                 questionId: q.id,
-                score: assessment.score,
-                reason: assessment.reason
+                score: aiResponse.score,
+                reason: aiResponse.reason
             });
 
         } catch (apiError) {
             console.error("Gemini API Error for Q " + q.id, apiError);
-            // デバッグ用に詳細なエラーを表示
             results.push({ questionId: q.id, score: 0, reason: "採点エラー: " + apiError.toString() });
         }
 
-        // 有料プランになったため、待機時間を短縮 (5秒 -> 1秒)
-        // ※完全に0にすると突発的な大量アクセスでエラーになることがあるため、安全策で少しだけ待ちます
         Utilities.sleep(1000);
     }
 
     return results;
+}
+
+/**
+ * 小問付き問題の採点
+ */
+function _gradeSubQuestions(question, answerObj, apiKey) {
+    // answerObj は k:v 形式を想定 (subId: answerText)
+
+    // 全空欄チェック等は省略し、AIに一括で投げます
+
+    // プロンプト構築
+    let subQsText = "";
+    let totalPoints = 0;
+
+    question.subQuestions.forEach((sq, idx) => {
+        subQsText += `
+小問(${idx + 1}): ${sq.text} (配点: ${sq.points}点)
+基準: ${sq.criteria || 'なし'}
+学生の回答: ${answerObj[sq.id] || '(未回答)'}
+`;
+        totalPoints += Number(sq.points);
+    });
+
+    const prompt = `
+あなたは電気工学の専門家かつ採点者です。以下の試験問題（複数の小問あり）に対する学生の回答を採点してください。
+親問題の共通テキストがある場合は考慮してください。
+
+【親問題テキスト】
+${question.text}
+
+【小問リストと回答】
+${subQsText}
+
+【採点フォーマット（厳守）】
+以下のJSON形式のみを出力してください。Markdownのコードブロックは不要です。
+配列で返してください。
+[
+  { "subQIndex": 0, "score": 数値, "reason": "フィードバック" },
+  { "subQIndex": 1, "score": 数値, "reason": "フィードバック" },
+  ...
+]
+※ subQIndexは0始まりのインデックスで対応させてください。
+`;
+
+    try {
+        const aiResponse = _callGeminiApi(apiKey, prompt);
+
+        // 配列であることを確認
+        if (!Array.isArray(aiResponse)) {
+            throw new Error("API response is not an array");
+        }
+
+        return aiResponse.map(r => {
+            const sq = question.subQuestions[r.subQIndex];
+            if (!sq) return null;
+            return {
+                questionId: question.id,
+                subQuestionId: sq.id,
+                score: r.score,
+                reason: r.reason
+            };
+        }).filter(Boolean);
+
+    } catch (e) {
+        console.error("Gemini API Error for Q " + question.id, e);
+        // エラー時は全小問0点
+        return question.subQuestions.map(sq => ({
+            questionId: question.id,
+            subQuestionId: sq.id,
+            score: 0,
+            reason: "採点エラー: " + e.toString()
+        }));
+    }
+}
+
+/**
+ * Gemini API呼び出し共通化
+ */
+function _callGeminiApi(apiKey, prompt) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent?key=${apiKey}`;
+    const payload = {
+        contents: [{ parts: [{ text: prompt }] }]
+    };
+
+    const options = {
+        'method': 'post',
+        'contentType': 'application/json',
+        'payload': JSON.stringify(payload),
+        'muteHttpExceptions': true
+    };
+
+    const response = UrlFetchApp.fetch(url, options);
+    const responseCode = response.getResponseCode();
+    const responseText = response.getContentText();
+
+    if (responseCode !== 200) {
+        throw new Error(`API Error (${responseCode}): ${responseText}`);
+    }
+
+    const data = JSON.parse(responseText);
+    const text = data.candidates[0].content.parts[0].text;
+
+    let jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
+    // パース処置
+    try {
+        return JSON.parse(jsonStr);
+    } catch (e) {
+        const match = jsonStr.match(/\[[\s\S]*\]/) || jsonStr.match(/\{[\s\S]*\}/);
+        if (match) {
+            try {
+                return JSON.parse(match[0].replace(/\\/g, '\\\\'));
+            } catch (e2) {
+                // Ignore
+            }
+        }
+        throw e;
+    }
 }
 
 /**
