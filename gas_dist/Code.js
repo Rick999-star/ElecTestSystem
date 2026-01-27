@@ -311,7 +311,7 @@ ${subQsText}
 }
 
 /**
- * Gemini API呼び出し共通化
+ * Gemini API呼び出し共通化 (リトライ処理付き)
  */
 function _callGeminiApi(apiKey, prompt) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent?key=${apiKey}`;
@@ -326,32 +326,67 @@ function _callGeminiApi(apiKey, prompt) {
         'muteHttpExceptions': true
     };
 
-    const response = UrlFetchApp.fetch(url, options);
-    const responseCode = response.getResponseCode();
-    const responseText = response.getContentText();
+    const MAX_RETRIES = 5;
+    let retryCount = 0;
 
-    if (responseCode !== 200) {
-        throw new Error(`API Error (${responseCode}): ${responseText}`);
-    }
+    // リトライループ
+    while (true) {
+        let response;
+        try {
+            response = UrlFetchApp.fetch(url, options);
+        } catch (e) {
+            // ネットワークエラー等の場合
+            if (retryCount >= MAX_RETRIES) throw e;
+            console.warn(`通信エラー: ${e.toString()}。リトライします... (${retryCount + 1}/${MAX_RETRIES})`);
+            retryCount++;
+            Utilities.sleep(Math.pow(2, retryCount) * 1000);
+            continue;
+        }
 
-    const data = JSON.parse(responseText);
-    const text = data.candidates[0].content.parts[0].text;
+        const responseCode = response.getResponseCode();
+        const responseText = response.getContentText();
 
-    let jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        // 成功 (200 OK)
+        if (responseCode === 200) {
+            const data = JSON.parse(responseText);
+            // 候補がない場合のガード
+            if (!data.candidates || data.candidates.length === 0) {
+                throw new Error(`No candidates returned. Response: ${responseText}`);
+            }
+            const text = data.candidates[0].content.parts[0].text;
 
-    // パース処置
-    try {
-        return JSON.parse(jsonStr);
-    } catch (e) {
-        const match = jsonStr.match(/\[[\s\S]*\]/) || jsonStr.match(/\{[\s\S]*\}/);
-        if (match) {
+            let jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
+            // パース処置
             try {
-                return JSON.parse(match[0].replace(/\\/g, '\\\\'));
-            } catch (e2) {
-                // Ignore
+                return JSON.parse(jsonStr);
+            } catch (e) {
+                const match = jsonStr.match(/\[[\s\S]*\]/) || jsonStr.match(/\{[\s\S]*\}/);
+                if (match) {
+                    try {
+                        return JSON.parse(match[0].replace(/\\/g, '\\\\'));
+                    } catch (e2) {
+                        // Ignore
+                    }
+                }
+                throw e;
             }
         }
-        throw e;
+
+        // リトライ対象: 429 (Too Many Requests) または 5xx (サーバーエラー)
+        if (responseCode === 429 || (responseCode >= 500 && responseCode < 600)) {
+            if (retryCount >= MAX_RETRIES) {
+                throw new Error(`API Error (${responseCode}) リトライ上限到達: ${responseText}`);
+            }
+            console.warn(`API Error (${responseCode}): ${responseText}。リトライします... (${retryCount + 1}/${MAX_RETRIES})`);
+            retryCount++;
+            // 指数バックオフ: 2秒, 4秒, 8秒, 16秒, 32秒...
+            Utilities.sleep(Math.pow(2, retryCount) * 1000);
+            continue;
+        }
+
+        // その他のエラー (400 Bad Request, 403 Forbidden など) はリトライしない
+        throw new Error(`API Error (${responseCode}): ${responseText}`);
     }
 }
 
