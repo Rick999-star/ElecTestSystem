@@ -9,6 +9,7 @@ const SCRIPT_PROP_KEY_GEMINI_API_KEY = 'GEMINI_API_KEY';
 const SHEET_NAME_QUESTIONS = 'Questions';
 const SHEET_NAME_RESPONSES = 'Responses';
 const SHEET_NAME_PATTERNS = 'Patterns';
+const SHEET_NAME_SCORE_TABLE = '点数表';
 
 /**
  * Webアプリへのアクセス時にHTMLを返す
@@ -32,10 +33,11 @@ function _getSpreadsheetId() {
 }
 
 /**
- * 問題データの保存 (管理画面用)
+ * 問題データの保存 (管理画面用) -- 公開(Deploy)処理
  * @param {Array} questions - フロントエンドから送信された問題リスト
+ * @param {string} patternTitle - (Optional) 適用するパターン名
  */
-function saveQuestions(questions) {
+function saveQuestions(questions, patternTitle) {
     try {
         const ssId = _getSpreadsheetId();
         const ss = SpreadsheetApp.openById(ssId);
@@ -43,6 +45,16 @@ function saveQuestions(questions) {
         if (!sheet) {
             sheet = ss.insertSheet(SHEET_NAME_QUESTIONS);
         }
+
+        // 保存されたパターン名をプロパティに記録 (Examinee表示用)
+        const props = PropertiesService.getScriptProperties();
+        if (patternTitle) {
+            props.setProperty('CURRENT_PATTERN_TITLE', patternTitle);
+        } else if (patternTitle === '') {
+            props.deleteProperty('CURRENT_PATTERN_TITLE');
+        }
+        // patternTitleが未指定(undefined)の場合は、既存の値を維持するか、"Custom"とするか。
+        // ここでは更新しない(=維持)戦略をとるが、明示的にnull/emptyが渡されたら消す。
 
         // 既存データをクリアしてヘッダーを設定
         sheet.clear();
@@ -57,18 +69,30 @@ function saveQuestions(questions) {
                 q.imageUrl || '',
                 q.points,
                 q.criteria || '',
-                q.subQuestions ? JSON.stringify(q.subQuestions) : '', // 小問をJSONとして保存
-                q.modelAnswer || '' // Col 7: 表示用模範解答
+                q.subQuestions ? JSON.stringify(q.subQuestions) : '',
+                q.modelAnswer || ''
             ]);
             sheet.getRange(2, 1, rows.length, 7).setValues(rows);
         }
 
-        // Force commit to ensure data is written
         SpreadsheetApp.flush();
-        return { success: true, message: '問題を保存しました。' };
+        return { success: true, message: '問題を保存・公開しました。' };
     } catch (e) {
         console.error(e);
         return { success: false, message: '保存エラー: ' + e.toString() };
+    }
+}
+
+/**
+ * 現在公開中のパターン名を取得
+ */
+function getDeployedPatternTitle() {
+    try {
+        const props = PropertiesService.getScriptProperties();
+        return props.getProperty('CURRENT_PATTERN_TITLE') || '';
+    } catch (e) {
+        console.error(e);
+        return '';
     }
 }
 
@@ -248,10 +272,44 @@ function getQuestions() {
 }
 
 /**
- * 回答の送信と採点
- * @param {Object} answers - { questionId: answerText, ... } または { questionId: { subId: answerText, ... } }
+ * 受験者の登録 (試験開始時)
+ * @param {string} name - 受験者名
+ * @param {string} patternTitle - 試験パターン名
+ * @return {string} sessionId - セッションID (点数表のID)
  */
-function submitAnswers(answers) {
+function registerCandidate(name, patternTitle) {
+    try {
+        if (!name) throw new Error("名前が入力されていません。");
+
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+        let sheet = ss.getSheetByName(SHEET_NAME_SCORE_TABLE);
+        if (!sheet) {
+            sheet = ss.insertSheet(SHEET_NAME_SCORE_TABLE);
+            // Header: ID | Date | Name | Pattern | Score
+            sheet.appendRow(['ID', 'Timestamp', 'Name', 'Pattern', 'Score']);
+        }
+
+        const sessionId = Utilities.getUuid();
+        const timestamp = new Date();
+
+        sheet.appendRow([sessionId, timestamp, name, patternTitle || '', '']); // Score is empty initially
+
+        SpreadsheetApp.flush();
+        return sessionId;
+
+    } catch (e) {
+        console.error("registerCandidate Error:", e);
+        throw e;
+    }
+}
+
+/**
+ * 回答の送信と採点
+ * @param {Object} answers - 回答オブジェクト
+ * @param {string} sessionId - セッションID (registerCandidateで取得)
+ */
+function submitAnswers(answers, sessionId) {
     try {
         const questions = getQuestions();
 
@@ -259,8 +317,13 @@ function submitAnswers(answers) {
         const gradingResults = _gradeWithGemini(questions, answers);
         const totalScore = gradingResults.reduce((sum, r) => sum + r.score, 0);
 
-        // 2. 結果をスプレッドシートに保存
-        _saveResponseLog(questions, answers, gradingResults, totalScore);
+        // 2. 点数表の更新 (sessionIdがある場合)
+        if (sessionId) {
+            _updateScoreTable(sessionId, totalScore);
+        }
+
+        // 3. 詳細ログをスプレッドシートに保存 (バックアップ/詳細分析用)
+        _saveResponseLog(questions, answers, gradingResults, totalScore, sessionId);
 
         return {
             success: true,
@@ -273,6 +336,33 @@ function submitAnswers(answers) {
         const errorMsg = e.toString();
         // ユーザーにわかりやすいエラーメッセージを返す
         return { success: false, message: '送信エラー: ' + errorMsg };
+    }
+}
+
+/**
+ * 点数表のスコア更新
+ */
+function _updateScoreTable(sessionId, score) {
+    try {
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+        const sheet = ss.getSheetByName(SHEET_NAME_SCORE_TABLE);
+        if (!sheet) return;
+
+        const data = sheet.getDataRange().getValues();
+        // 1列目(ID)を検索 (Header is row 1, data starts row 2)
+        // データを走査してIDが一致する行を探す
+        for (let i = 1; i < data.length; i++) {
+            if (String(data[i][0]) === String(sessionId)) {
+                // Score is Col 5 (index 4)
+                sheet.getRange(i + 1, 5).setValue(score);
+                SpreadsheetApp.flush();
+                return;
+            }
+        }
+        console.warn("Session ID not found in Score Table:", sessionId);
+    } catch (e) {
+        console.error("Update Score Table Error:", e);
     }
 }
 
@@ -514,13 +604,13 @@ function _callGeminiApi(apiKey, prompt) {
 /**
  * 回答ログをシートに保存
  */
-function _saveResponseLog(questions, answers, gradingResults, totalScore) {
+function _saveResponseLog(questions, answers, gradingResults, totalScore, sessionId) {
     const ssId = _getSpreadsheetId();
     const ss = SpreadsheetApp.openById(ssId);
     let sheet = ss.getSheetByName(SHEET_NAME_RESPONSES);
     if (!sheet) {
         sheet = ss.insertSheet(SHEET_NAME_RESPONSES);
-        sheet.appendRow(['Timestamp', 'Total Score', 'Details (JSON)']); // Header
+        sheet.appendRow(['Timestamp', 'Total Score', 'SessionID', 'Details (JSON)']); // Header
     }
 
     const detailObj = {
@@ -531,6 +621,7 @@ function _saveResponseLog(questions, answers, gradingResults, totalScore) {
     sheet.appendRow([
         new Date(),
         totalScore,
+        sessionId || '',
         JSON.stringify(detailObj)
     ]);
 }

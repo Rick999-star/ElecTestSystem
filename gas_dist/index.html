@@ -591,6 +591,50 @@
                 </div>
             </div>
         </div>
+
+        <!-- Name Input Modal -->
+        <div v-if="showNameModal"
+            class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm p-4 animate-fade-in"
+            v-cloak>
+            <div
+                class="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all scale-100">
+                <div
+                    class="bg-accent px-6 py-4 flex justify-between items-center bg-gradient-to-r from-teal-600 to-teal-500">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2"><i
+                            class="fa-solid fa-user-pen"></i>
+                        受験者情報入力
+                    </h3>
+                    <!-- Close button disabled to force input -->
+                </div>
+                <div class="p-8 space-y-6">
+                    <div class="bg-teal-50 p-4 rounded-lg border border-teal-100 mb-4" v-if="currentDeployedPattern">
+                        <p class="text-xs text-teal-600 font-bold uppercase tracking-wide mb-1">試験パターン</p>
+                        <p class="text-gray-800 font-bold text-lg">{{ currentDeployedPattern }}</p>
+                    </div>
+
+                    <p class="text-gray-600 text-sm">試験を開始する前に、あなたのお名前を入力してください。</p>
+                    <div class="space-y-2">
+                        <label class="block text-sm font-bold text-gray-700">お名前</label>
+                        <input type="text" v-model="studentName" @keyup.enter="startExam" placeholder="例: 山田 太郎"
+                            autofocus
+                            class="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:border-accent focus:ring-4 focus:ring-teal-50 outline-none transition text-lg placeholder-gray-400">
+                        <p v-if="nameError"
+                            class="text-red-500 text-xs font-bold flex items-center gap-1 animate-pulse">
+                            <i class="fa-solid fa-circle-exclamation"></i>{{ nameError }}
+                        </p>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-4">
+                        <button @click="cancelExam"
+                            class="px-5 py-2.5 text-gray-500 hover:bg-gray-100 rounded-lg transition font-medium text-sm">キャンセル</button>
+                        <button @click="startExam" :disabled="isLoading"
+                            class="px-6 py-2.5 bg-accent hover:bg-teal-700 text-white font-bold rounded-lg shadow-md hover:shadow-lg transition text-sm flex items-center gap-2 disabled:opacity-50">
+                            <i class="fa-solid fa-play"></i> 試験開始
+                            <i v-if="isLoading" class="fa-solid fa-circle-notch fa-spin"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.min.js" crossorigin></script>
@@ -618,7 +662,13 @@
                     const patternTitle = ref('');
                     const selectedPatternTitle = ref('');
                     const savedPatterns = ref([]);
-                    const currentDeployedPattern = ref('');
+                    const currentDeployedPattern = ref(''); // Mock default: '2024前期' set later if needed
+
+                    // Name Registration State
+                    const showNameModal = ref(false);
+                    const studentName = ref('');
+                    const sessionId = ref(null);
+                    const nameError = ref('');
 
                     const isGasEnv = typeof google !== 'undefined' && google.script;
 
@@ -632,11 +682,8 @@
                             if (!isGasEnv) {
                                 clearTimeout(timeoutId);
                                 if (funcName === 'saveQuestions') return setTimeout(() => resolve({ success: true }), 500);
-                                // Mock for patterns
-                                if (funcName === 'savePattern') return setTimeout(() => {
-                                    console.log('Mock Save Pattern:', args);
-                                    return resolve({ success: true, message: 'Mock Saved' });
-                                }, 500);
+                                if (funcName === 'getDeployedPatternTitle') return setTimeout(() => resolve('Mock Deployed Pattern (Local)'), 500);
+                                if (funcName === 'savePattern') return setTimeout(() => resolve({ success: true, message: 'Mock Saved' }), 500);
                                 if (funcName === 'getPatternList') return setTimeout(() => resolve([
                                     { title: 'Mock Pattern A', updatedAt: new Date() },
                                     { title: 'Mock Pattern B', updatedAt: new Date(Date.now() - 86400000) }
@@ -648,7 +695,6 @@
                                     ]
                                 }), 500);
                                 if (funcName === 'deletePattern') return setTimeout(() => resolve({ success: true }), 500);
-
                                 if (funcName === 'testGeminiConnection') return setTimeout(() => resolve({ success: true, message: '(Mock) Connection OK' }), 500);
                                 if (funcName === 'testGrading') return setTimeout(() => resolve({ success: true, message: '(Mock) Grading OK', details: [] }), 1000);
                                 if (funcName === 'getQuestions') return setTimeout(() => resolve([
@@ -669,6 +715,11 @@
                                         { score: 2, reason: '(Local) Weak', questionId: '2', subQuestionId: 'sq2' }
                                     ]
                                 }), 1500);
+                                if (funcName === 'registerCandidate') return setTimeout(() => {
+                                    console.log(`Mock Registered: ${args[0]}, Pattern: ${args[1]}`);
+                                    resolve('mock-session-id-' + Date.now());
+                                }, 800);
+
                                 return resolve();
                             }
                             google.script.run
@@ -769,8 +820,13 @@
                         isLoading.value = true;
                         loadingMessage.value = 'Loading questions...';
                         try {
-                            const data = await runGas('getQuestions');
-                            questions.value = data || [];
+                            const [qData, pTitle] = await Promise.all([
+                                runGas('getQuestions'),
+                                runGas('getDeployedPatternTitle')
+                            ]);
+                            questions.value = qData || [];
+                            currentDeployedPattern.value = pTitle || '';
+
                             if (currentView.value === 'admin' && questions.value.length === 0) {
                                 addQuestion();
                             }
@@ -802,15 +858,30 @@
                             return;
                         }
 
-                        currentView.value = view;
-                        testResult.value = null;
-                        answers.value = {};
-                        currentQuestionIndex.value = 0;
-                        if (view === 'examinee' || view === 'admin') {
-                            await loadQuestions();
+                        if (view === 'examinee') {
+                            // If we already have a session, just go
+                            if (sessionId.value && studentName.value) {
+                                currentView.value = 'examinee';
+                            } else {
+                                // Show Name Modal
+                                showNameModal.value = true;
+                                nameError.value = '';
+                                // Pre-load questions in background
+                                loadQuestions();
+                                currentView.value = 'examinee';
+                            }
+                        } else {
+                            currentView.value = view;
+                            if (view === 'admin') {
+                                loadQuestions();
+                                loadPatternList();
+                            }
                         }
-                        if (view === 'admin') {
-                            loadPatternList();
+
+                        if (view !== 'examinee') {
+                            testResult.value = null;
+                            answers.value = {};
+                            currentQuestionIndex.value = 0;
                         }
                     };
 
@@ -922,7 +993,7 @@
 
                                 // Auto-publish to "Questions" sheet
                                 loadingMessage.value = 'Syncing to Examinee View...';
-                                const saveRes = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value)));
+                                const saveRes = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value)), selectedPatternTitle.value);
                                 if (saveRes.success) {
                                     alert(`パターン「${selectedPatternTitle.value}」を読み込み、受験者画面に反映しました。`);
                                     currentDeployedPattern.value = selectedPatternTitle.value;
@@ -966,13 +1037,39 @@
                     const nextQuestion = () => { if (!isLastQuestion.value) currentQuestionIndex.value++; };
                     const prevQuestion = () => { if (currentQuestionIndex.value > 0) currentQuestionIndex.value--; };
 
+                    const startExam = async () => {
+                        if (!studentName.value.trim()) {
+                            nameError.value = "名前を入力してください";
+                            return;
+                        }
+                        isLoading.value = true;
+                        loadingMessage.value = '登録中...';
+                        try {
+                            const sid = await runGas('registerCandidate', studentName.value, currentDeployedPattern.value);
+                            sessionId.value = sid;
+                            showNameModal.value = false;
+                        } catch (e) {
+                            alert('登録エラー: ' + e);
+                            console.error(e);
+                        } finally {
+                            isLoading.value = false;
+                        }
+                    };
+
+                    const cancelExam = () => {
+                        showNameModal.value = false;
+                        studentName.value = '';
+                        sessionId.value = null;
+                        switchView('landing');
+                    };
+
                     const submitTest = async () => {
                         if (!confirm('採点を開始して試験を終了しますか？\n（未回答の問題があっても採点されます）')) return;
                         isLoading.value = true;
                         loadingMessage.value = 'Grading...';
 
                         try {
-                            const res = await runGas('submitAnswers', JSON.parse(JSON.stringify(answers.value)));
+                            const res = await runGas('submitAnswers', JSON.parse(JSON.stringify(answers.value)), sessionId.value);
 
                             if (res.success) {
                                 testResult.value = res;
@@ -1124,7 +1221,9 @@
                         getQuestionText, getUserAnswer, getResultStatus, getCriteria, getModelAnswer,
                         // Pattern Management
                         patternTitle, selectedPatternTitle, savedPatterns, formatDate,
-                        savePattern, loadPattern, deletePattern, currentDeployedPattern, createNewPattern
+                        savePattern, loadPattern, deletePattern, currentDeployedPattern, createNewPattern,
+                        // Candidate Management
+                        showNameModal, studentName, nameError, startExam, cancelExam
                     }
                 }
             }).mount('#app');
