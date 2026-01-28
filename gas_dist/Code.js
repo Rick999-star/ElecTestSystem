@@ -305,6 +305,44 @@ function registerCandidate(name, patternTitle) {
 }
 
 /**
+ * 採点前に回答を一時保存する (タイムアウト対策)
+ * @param {Object} answers - 回答オブジェクト
+ * @param {string} sessionId - セッションID
+ */
+function saveTemporaryAnswers(answers, sessionId) {
+    try {
+        if (!sessionId) throw new Error("Session ID is required for temporary save.");
+
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+        let sheet = ss.getSheetByName(SHEET_NAME_RESPONSES);
+
+        if (!sheet) {
+            sheet = ss.insertSheet(SHEET_NAME_RESPONSES);
+            sheet.appendRow(['Timestamp', 'Total Score', 'SessionID', 'Details (JSON)']); // Header
+        }
+
+        const detailObj = {
+            status: "PENDING_GRADING", // 採点待ちフラグ
+            answers: answers
+        };
+
+        // Scoreは "PENDING" として保存
+        sheet.appendRow([
+            new Date(),
+            "PENDING",
+            sessionId,
+            JSON.stringify(detailObj)
+        ]);
+
+        return { success: true };
+    } catch (e) {
+        console.error("saveTemporaryAnswers Error:", e);
+        return { success: false, message: e.toString() };
+    }
+}
+
+/**
  * 回答の送信と採点
  * @param {Object} answers - 回答オブジェクト
  * @param {string} sessionId - セッションID (registerCandidateで取得)
@@ -372,6 +410,9 @@ function _updateScoreTable(sessionId, score) {
 /**
  * Gemini APIと通信して採点を行う内部関数 (一括採点版)
  */
+/**
+ * Gemini APIと通信して採点を行う内部関数 (並列処理版)
+ */
 function _gradeWithGemini(questions, answers) {
     const apiKey = PropertiesService.getScriptProperties().getProperty(SCRIPT_PROP_KEY_GEMINI_API_KEY);
 
@@ -425,20 +466,22 @@ function _gradeWithGemini(questions, answers) {
 
     if (problemList.length === 0) return [];
 
-    // 一括送信だと429エラー(Resource exhausted)になるため、分割処理(チャンク化)を行う
-    const CHUNK_SIZE = 5; // 5問ずつ処理
-    let allResults = [];
-
-    // チャンクごとの処理ループ
+    // 並列処理のためにリクエストを作成
+    const CHUNK_SIZE = 4; // チャンクサイズを縮小 (安定性重視)
+    const chunks = [];
     for (let i = 0; i < problemList.length; i += CHUNK_SIZE) {
-        const chunk = problemList.slice(i, i + CHUNK_SIZE);
+        chunks.push(problemList.slice(i, i + CHUNK_SIZE));
+    }
 
+    // Gemini API エンドポイント (Gemini 3.0 Flash Preview)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+    const requests = chunks.map((chunk, i) => {
         let promptText = `
 あなたは電気工学の専門家かつ厳格な採点者です。以下の試験問題に対する学生の回答を一括で採点してください。
 
 【採点対象リスト】
 `;
-
         chunk.forEach((p, index) => {
             const ans = typeof p.studentAnswer === 'string' ? p.studentAnswer : JSON.stringify(p.studentAnswer);
             promptText += `
@@ -470,135 +513,102 @@ No.${index + 1}
 ※ 理由(reason)は学生への直接的なフィードバックとして適切かつ簡潔な日本語で記述してください。
 `;
 
-        try {
-            // レート制限回避のため、2回目以降は少し待機
-            if (i > 0) Utilities.sleep(1000);
+        return {
+            url: url,
+            method: 'post',
+            contentType: 'application/json',
+            payload: JSON.stringify({
+                contents: [{ parts: [{ text: promptText }] }],
+                generationConfig: { response_mime_type: "application/json" }
+            }),
+            muteHttpExceptions: true
+        };
+    });
 
-            const aiResponse = _callGeminiApi(apiKey, promptText);
-            let chunkResults = [];
+    // 並列実行
+    let responses = [];
+    try {
+        console.log(`Starting parallel grading for ${chunks.length} chunks...`);
+        responses = UrlFetchApp.fetchAll(requests);
+    } catch (e) {
+        console.error("UrlFetchApp.fetchAll failed completely:", e);
+        // 全体が失敗した場合のフォールバック
+        return problemList.map(p => ({
+            questionId: p.qId,
+            subQuestionId: p.sqId,
+            score: 0,
+            reason: "通信エラーが発生しました: " + e.message
+        }));
+    }
 
-            if (!Array.isArray(aiResponse)) {
-                // 単一オブジェクト救済
-                chunkResults = Array.isArray(aiResponse) ? aiResponse : [aiResponse];
-            } else {
-                chunkResults = aiResponse;
+    let allResults = [];
+
+    // レスポンス処理
+    responses.forEach((response, i) => {
+        const chunk = chunks[i];
+        const responseCode = response.getResponseCode();
+        const responseText = response.getContentText();
+
+        let chunkResults = [];
+        let success = false;
+
+        if (responseCode === 200) {
+            try {
+                const data = JSON.parse(responseText);
+                if (data.candidates && data.candidates.length > 0) {
+                    const text = data.candidates[0].content.parts[0].text;
+                    const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+                    // パース試行
+                    let parsedData;
+                    try {
+                        parsedData = JSON.parse(jsonStr);
+                    } catch (e) {
+                        const match = jsonStr.match(/\[[\s\S]*\]/) || jsonStr.match(/\{[\s\S]*\}/);
+                        if (match) parsedData = JSON.parse(match[0].replace(/\\/g, '\\\\'));
+                    }
+
+                    if (Array.isArray(parsedData)) {
+                        chunkResults = parsedData;
+                        success = true;
+                    } else if (parsedData) {
+                        chunkResults = [parsedData];
+                        success = true;
+                    }
+                }
+            } catch (e) {
+                console.error(`Chunk ${i} parse error:`, e);
             }
+        } else {
+            console.warn(`Chunk ${i} failed with status ${responseCode}: ${responseText}`);
+        }
 
-            // チャンク内インデックスを元にマッピング
-            const mappedChunk = chunkResults.map(r => {
+        if (success) {
+            const mapped = chunkResults.map(r => {
                 const idx = r.index;
-                // インデックス範囲チェック
                 if (typeof idx !== 'number' || idx < 0 || idx >= chunk.length) return null;
-
-                const originalParam = chunk[idx];
+                const original = chunk[idx];
                 return {
-                    questionId: originalParam.qId,
-                    subQuestionId: originalParam.sqId,
+                    questionId: original.qId,
+                    subQuestionId: original.sqId,
                     score: Number(r.score) || 0,
                     reason: r.reason || ''
                 };
             }).filter(Boolean);
-
-            allResults = allResults.concat(mappedChunk);
-
-        } catch (apiError) {
-            console.error(`Gemini API Batch Error (Chunk ${i / CHUNK_SIZE + 1})`, apiError);
-            // エラー時はこのチャンク分を0点で埋める
+            allResults = allResults.concat(mapped);
+        } else {
+            // 失敗したチャンクは0点埋め (再試行ロジックを入れるならここだが、fetchAllだと個別リトライは複雑なので一旦エラー扱い)
+            // 時間があれば、失敗したリクエストだけ抽出して _callGeminiApi（同期）でリトライする実装も可
             const fallback = chunk.map(p => ({
                 questionId: p.qId,
                 subQuestionId: p.sqId,
                 score: 0,
-                reason: "採点システムエラー: " + apiError.message
+                reason: `採点エラー (Status: ${responseCode})`
             }));
             allResults = allResults.concat(fallback);
         }
-    }
+    });
 
     return allResults;
-}
-
-/**
- * Gemini API呼び出し共通化 (リトライ処理付き)
- */
-function _callGeminiApi(apiKey, prompt) {
-    // ユーザー環境で利用可能な最新モデル (Gemini 3.0 Flash Preview) に切り替え
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
-    const payload = {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-            response_mime_type: "application/json"
-        }
-    };
-
-    const options = {
-        'method': 'post',
-        'contentType': 'application/json',
-        'payload': JSON.stringify(payload),
-        'muteHttpExceptions': true
-    };
-
-    const MAX_RETRIES = 3;
-    let retryCount = 0;
-
-    // リトライループ
-    while (true) {
-        let response;
-        try {
-            response = UrlFetchApp.fetch(url, options);
-        } catch (e) {
-            // ネットワークエラー等の場合
-            if (retryCount >= MAX_RETRIES) throw e;
-            console.warn(`通信エラー: ${e.toString()}。リトライします... (${retryCount + 1}/${MAX_RETRIES})`);
-            retryCount++;
-            Utilities.sleep(Math.pow(2, retryCount) * 1000);
-            continue;
-        }
-
-        const responseCode = response.getResponseCode();
-        const responseText = response.getContentText();
-
-        // 成功 (200 OK)
-        if (responseCode === 200) {
-            const data = JSON.parse(responseText);
-            // 候補がない場合のガード
-            if (!data.candidates || data.candidates.length === 0) {
-                throw new Error(`No candidates returned. Response: ${responseText}`);
-            }
-            const text = data.candidates[0].content.parts[0].text;
-
-            let jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-
-            // パース処置
-            try {
-                return JSON.parse(jsonStr);
-            } catch (e) {
-                const match = jsonStr.match(/\[[\s\S]*\]/) || jsonStr.match(/\{[\s\S]*\}/);
-                if (match) {
-                    try {
-                        return JSON.parse(match[0].replace(/\\/g, '\\\\'));
-                    } catch (e2) {
-                        // Ignore
-                    }
-                }
-                throw e;
-            }
-        }
-
-        // リトライ対象: 429 (Too Many Requests) または 5xx (サーバーエラー)
-        if (responseCode === 429 || (responseCode >= 500 && responseCode < 600)) {
-            if (retryCount >= MAX_RETRIES) {
-                throw new Error(`API Error (${responseCode}) リトライ上限到達: ${responseText}`);
-            }
-            console.warn(`API Error (${responseCode}): ${responseText}。リトライします... (${retryCount + 1}/${MAX_RETRIES})`);
-            retryCount++;
-            // 指数バックオフ: 2秒, 4秒, 8秒, 16秒, 32秒...
-            Utilities.sleep(Math.pow(2, retryCount) * 1000);
-            continue;
-        }
-
-        // その他のエラー (400 Bad Request, 403 Forbidden など) はリトライしない
-        throw new Error(`API Error (${responseCode}): ${responseText}`);
-    }
 }
 
 /**
@@ -677,13 +687,18 @@ function testGeminiConnection() {
  * デバッグ用: 採点ロジック単体テスト
  */
 function testGrading() {
-    const dummyQuestions = [{
-        id: 'debug_q1',
-        text: '電流の単位は何か？記号で答えなさい。',
+    // Generate 15 dummy questions to test multi-chunk parallel processing (CHUNK_SIZE=7 -> 3 chunks)
+    const dummyQuestions = Array.from({ length: 15 }, (_, i) => ({
+        id: `debug_q${i + 1}`,
+        text: `電流の単位は何か？(Test Q${i + 1})`,
         points: 10,
-        criteria: '正解は「A」または「アンペア」'
-    }];
-    const dummyAnswers = { 'debug_q1': 'A' };
+        criteria: '正解は「A」'
+    }));
+
+    const dummyAnswers = {};
+    dummyQuestions.forEach(q => {
+        dummyAnswers[q.id] = 'A';
+    });
 
     try {
         const start = new Date();

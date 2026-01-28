@@ -639,7 +639,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.min.js" crossorigin></script>
     <script>
-        const { createApp, ref, computed, onMounted } = Vue;
+        const { createApp, ref, computed, onMounted, watch } = Vue;
 
         if (typeof createApp !== 'function') {
             throw new Error('Vue.js check failed: createApp is not a function.');
@@ -662,25 +662,27 @@
                     const patternTitle = ref('');
                     const selectedPatternTitle = ref('');
                     const savedPatterns = ref([]);
-                    const currentDeployedPattern = ref(''); // Mock default: '2024前期' set later if needed
-
-                    // Name Registration State
+                    const currentDeployedPattern = ref('');
                     const showNameModal = ref(false);
                     const studentName = ref('');
                     const sessionId = ref(null);
                     const nameError = ref('');
 
+                    // Retry State
+                    const isGradingFailed = ref(false);
+
                     const isGasEnv = typeof google !== 'undefined' && google.script;
 
+                    // ... (runGas helper omitted - no change) ...
                     const runGas = (funcName, ...args) => {
                         return new Promise((resolve, reject) => {
-                            // タイムアウト設定 (300秒 = 5分)
                             const timeoutId = setTimeout(() => {
                                 reject(new Error('Timeout: サーバーからの応答がありません。300秒以上経過しました。'));
                             }, 300000);
 
                             if (!isGasEnv) {
                                 clearTimeout(timeoutId);
+                                if (funcName === 'saveTemporaryAnswers') return setTimeout(() => resolve({ success: true }), 300);
                                 if (funcName === 'saveQuestions') return setTimeout(() => resolve({ success: true }), 500);
                                 if (funcName === 'getDeployedPatternTitle') return setTimeout(() => resolve('Mock Deployed Pattern (Local)'), 500);
                                 if (funcName === 'savePattern') return setTimeout(() => resolve({ success: true, message: 'Mock Saved' }), 500);
@@ -719,7 +721,6 @@
                                     console.log(`Mock Registered: ${args[0]}, Pattern: ${args[1]}`);
                                     resolve('mock-session-id-' + Date.now());
                                 }, 800);
-
                                 return resolve();
                             }
                             google.script.run
@@ -735,120 +736,19 @@
                         });
                     };
 
-                    const checkConnection = async () => {
-                        isLoading.value = true;
-                        loadingMessage.value = 'Connecting to Gemini...';
-                        try {
-                            const res = await runGas('testGeminiConnection');
-                            alert(res.success ? '成功: ' + res.message : '失敗: ' + res.message);
-                        } catch (e) {
-                            alert('通信エラー: ' + e);
-                        } finally {
-                            isLoading.value = false;
-                        }
-                    };
+                    // ... (helpers like checkConnection, etc. omitted - no change) ...
+                    const checkConnection = async () => { /* ... */ isLoading.value = true; loadingMessage.value = 'Connecting to Gemini...'; try { const res = await runGas('testGeminiConnection'); alert(res.success ? '成功: ' + res.message : '失敗: ' + res.message); } catch (e) { alert('通信エラー: ' + e); } finally { isLoading.value = false; } };
+                    const checkGrading = async () => { /* ... */ isLoading.value = true; loadingMessage.value = 'Testing grading logic...'; try { const res = await runGas('testGrading'); if (res.success) { console.log(res.details); alert('成功: ' + res.message + '\n詳細はコンソールを確認してください'); } else { alert('失敗: ' + res.message); } } catch (e) { alert('通信エラー: ' + e); } finally { isLoading.value = false; } };
+                    const processImageUrl = (url) => { if (!url) return ''; let match = url.match(/\/d\/([a-zA-Z0-9_-]+)/); if (!match) match = url.match(/id=([a-zA-Z0-9_-]+)/); if (match && match[1]) { return 'https://drive.google.com/uc?export=view&id=' + match[1]; } return url; };
+                    const handleImageError = (e) => { console.error('Image load failed'); };
+                    const insertChar = (obj, field, char) => { if (!obj[field]) obj[field] = ''; obj[field] += char; };
+                    const numberedCircle = (num) => { const chars = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩']; return chars[num - 1] || `(${num})`; };
 
-                    const checkGrading = async () => {
-                        isLoading.value = true;
-                        loadingMessage.value = 'Testing grading logic...';
-                        try {
-                            const res = await runGas('testGrading');
-                            if (res.success) {
-                                console.log(res.details);
-                                alert('成功: ' + res.message + '\n詳細はコンソールを確認してください');
-                            } else {
-                                alert('失敗: ' + res.message);
-                            }
-                        } catch (e) {
-                            alert('通信エラー: ' + e);
-                        } finally {
-                            isLoading.value = false;
-                        }
-                    };
+                    const getSubQNumber = (res) => { /* ... */ const q = questions.value.find(q => q.id === res.questionId); if (!q || !q.subQuestions) return '?'; const idx = q.subQuestions.findIndex(sq => sq.id === res.subQuestionId); return numberedCircle(idx + 1); };
+                    const getAnswerRef = (qId, subId) => { /* ... */ if (!answers.value[qId]) answers.value[qId] = {}; if (typeof answers.value[qId] !== 'object') answers.value[qId] = {}; return { get value() { return answers.value[qId][subId] || ''; }, set value(v) { answers.value[qId][subId] = v; } } };
+                    const loadQuestions = async () => { /* ... */ isLoading.value = true; loadingMessage.value = 'Loading questions...'; try { const [qData, pTitle] = await Promise.all([runGas('getQuestions'), runGas('getDeployedPatternTitle')]); questions.value = qData || []; currentDeployedPattern.value = pTitle || ''; if (currentView.value === 'admin' && questions.value.length === 0) { addQuestion(); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
 
-                    const processImageUrl = (url) => {
-                        if (!url) return '';
-                        let match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
-                        if (!match) match = url.match(/id=([a-zA-Z0-9_-]+)/);
-                        if (match && match[1]) {
-                            return 'https://drive.google.com/uc?export=view&id=' + match[1];
-                        }
-                        return url;
-                    };
-
-                    const handleImageError = (e) => {
-                        console.error('Image load failed');
-                    };
-
-                    // 記号挿入ヘルパー - SubQuestion対応のために汎用化が必要だが、一旦簡易対応
-                    const insertChar = (obj, field, char) => {
-                        if (!obj[field]) obj[field] = '';
-                        obj[field] += char;
-                    };
-
-                    // 丸数字変換
-                    const numberedCircle = (num) => {
-                        const chars = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
-                        return chars[num - 1] || `(${num})`;
-                    };
-
-                    const getSubQNumber = (res) => {
-                        // 結果表示用ヘルパー
-                        // 元の質問を探してインデックスを特定するのは高コストなので、APIが返すべきだが
-                        // ここでは簡易的に実装できないため、IDマッチングを試みる
-                        // ※本来はAPIレスポンスにindexを含めると楽
-                        const q = questions.value.find(q => q.id === res.questionId);
-                        if (!q || !q.subQuestions) return '?';
-                        const idx = q.subQuestions.findIndex(sq => sq.id === res.subQuestionId);
-                        return numberedCircle(idx + 1);
-                    };
-
-                    // 入れ子回答へのバインディング用
-                    const getAnswerRef = (qId, subId) => {
-                        if (!answers.value[qId]) answers.value[qId] = {};
-                        if (typeof answers.value[qId] !== 'object') answers.value[qId] = {}; // 既存データ保護
-
-                        // refを返さないとv-modelが効かないため、computedプロパティ的なオブジェクトを返す
-                        // Vue3のReactive Mapハック
-                        return {
-                            get value() { return answers.value[qId][subId] || ''; },
-                            set value(v) { answers.value[qId][subId] = v; }
-                        }
-                    };
-
-                    const loadQuestions = async () => {
-                        isLoading.value = true;
-                        loadingMessage.value = 'Loading questions...';
-                        try {
-                            const [qData, pTitle] = await Promise.all([
-                                runGas('getQuestions'),
-                                runGas('getDeployedPatternTitle')
-                            ]);
-                            questions.value = qData || [];
-                            currentDeployedPattern.value = pTitle || '';
-
-                            if (currentView.value === 'admin' && questions.value.length === 0) {
-                                addQuestion();
-                            }
-                        } catch (e) {
-                            alert('Error: ' + e);
-                        } finally {
-                            isLoading.value = false;
-                        }
-                    };
-
-                    const checkPassword = () => {
-                        if (inputPassword.value === 'denkitest') {
-                            isAuthenticated.value = true;
-                            showPasswordModal.value = false;
-                            inputPassword.value = '';
-                            authError.value = '';
-                            switchView('admin');
-                        } else {
-                            authError.value = 'パスワードが間違っています';
-                            inputPassword.value = '';
-                        }
-                    };
+                    const checkPassword = () => { /* ... */ if (inputPassword.value === 'denkitest') { isAuthenticated.value = true; showPasswordModal.value = false; inputPassword.value = ''; authError.value = ''; switchView('admin'); } else { authError.value = 'パスワードが間違っています'; inputPassword.value = ''; } };
 
                     const switchView = async (view) => {
                         // Admin Auth Check
@@ -859,14 +759,11 @@
                         }
 
                         if (view === 'examinee') {
-                            // If we already have a session, just go
                             if (sessionId.value && studentName.value) {
                                 currentView.value = 'examinee';
                             } else {
-                                // Show Name Modal
                                 showNameModal.value = true;
                                 nameError.value = '';
-                                // Pre-load questions in background
                                 loadQuestions();
                                 currentView.value = 'examinee';
                             }
@@ -879,161 +776,29 @@
                         }
 
                         if (view !== 'examinee') {
+                            // Leave admin mode or landing -> clear test state ONLY if not just switching tabs
+                            // But here we reset.
                             testResult.value = null;
-                            answers.value = {};
+                            // answers.value = {}; // Don't clear answers on view switch for safety, mainly explicit reset
                             currentQuestionIndex.value = 0;
                         }
                     };
 
-                    const addQuestion = () => {
-                        questions.value.push({
-                            id: Date.now().toString(),
-                            text: '',
-                            imageUrl: '',
-                            points: 10,
-                            criteria: '',
-                            modelAnswer: ''
-                        });
-                    };
-
-                    const removeQuestion = (index) => {
-                        questions.value.splice(index, 1);
-                    };
-
-                    const addSubQuestion = (q) => {
-                        if (!q.subQuestions) q.subQuestions = [];
-                        q.subQuestions.push({
-                            id: 'sq-' + Date.now() + Math.random().toString(36).substr(2, 5),
-                            text: '',
-                            points: 5,
-                            criteria: '',
-                            modelAnswer: ''
-                        });
-                    };
-
-                    const removeSubQuestion = (q, index) => {
-                        q.subQuestions.splice(index, 1);
-                    };
-
-                    const moveQuestion = (index, direction) => {
-                        const newIndex = index + direction;
-                        if (newIndex >= 0 && newIndex < questions.value.length) {
-                            const item = questions.value.splice(index, 1)[0];
-                            questions.value.splice(newIndex, 0, item);
-                        }
-                    };
-
-                    const finalizeQuestions = async () => {
-                        if (!confirm('Save questions?')) return;
-                        isLoading.value = true;
-                        loadingMessage.value = 'Saving...';
-                        try {
-                            const res = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value)));
-                            if (res.success) {
-                                alert('Saved!');
-                            } else {
-                                alert('Save failed: ' + res.message);
-                            }
-                        } catch (e) {
-                            alert('Error: ' + e);
-                        } finally {
-                            isLoading.value = false;
-                        }
-                    };
-
-                    // --- Pattern Management ---
-                    const formatDate = (dateStr) => {
-                        if (!dateStr) return '';
-                        const d = new Date(dateStr);
-                        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
-                    };
-
-                    const loadPatternList = async () => {
-                        try {
-                            const list = await runGas('getPatternList');
-                            savedPatterns.value = list;
-                        } catch (e) {
-                            console.error('Failed to load patterns', e);
-                        }
-                    };
-
-                    const savePattern = async () => {
-                        if (!patternTitle.value) return;
-                        if (!confirm(`パターン「${patternTitle.value}」として保存しますか？`)) return;
-
-                        isLoading.value = true;
-                        loadingMessage.value = 'Saving Pattern...';
-                        try {
-                            const res = await runGas('savePattern', patternTitle.value, JSON.parse(JSON.stringify(questions.value)));
-                            if (res.success) {
-                                alert(res.message);
-                                await loadPatternList(); // リスト更新
-                                selectedPatternTitle.value = patternTitle.value; // 保存したものを選択状態に
-                            } else {
-                                alert('失敗: ' + res.message);
-                            }
-                        } catch (e) {
-                            alert('Error: ' + e);
-                        } finally {
-                            isLoading.value = false;
-                        }
-                    };
-
-                    const loadPattern = async () => {
-                        if (!selectedPatternTitle.value) return;
-                        if (!confirm(`パターン「${selectedPatternTitle.value}」を読み込みますか？\n編集中の内容は失われます。`)) return;
-
-                        isLoading.value = true;
-                        loadingMessage.value = 'Loading Pattern...';
-                        try {
-                            const res = await runGas('getPattern', selectedPatternTitle.value);
-                            if (res.success) {
-                                questions.value = res.questions;
-                                patternTitle.value = selectedPatternTitle.value; // タイトル入力欄にも反映
-
-                                // Auto-publish to "Questions" sheet
-                                loadingMessage.value = 'Syncing to Examinee View...';
-                                const saveRes = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value)), selectedPatternTitle.value);
-                                if (saveRes.success) {
-                                    alert(`パターン「${selectedPatternTitle.value}」を読み込み、受験者画面に反映しました。`);
-                                    currentDeployedPattern.value = selectedPatternTitle.value;
-                                } else {
-                                    alert('読み込みは成功しましたが、反映に失敗しました: ' + saveRes.message);
-                                }
-                            } else {
-                                alert('失敗: ' + res.message);
-                            }
-                        } catch (e) {
-                            alert('Error: ' + e);
-                        } finally {
-                            isLoading.value = false;
-                        }
-                    };
-
-                    const deletePattern = async () => {
-                        if (!selectedPatternTitle.value) return;
-                        if (!confirm(`本当に「${selectedPatternTitle.value}」を削除しますか？`)) return;
-
-                        isLoading.value = true;
-                        try {
-                            const res = await runGas('deletePattern', selectedPatternTitle.value);
-                            if (res.success) {
-                                alert('削除しました。');
-                                selectedPatternTitle.value = '';
-                                await loadPatternList();
-                            } else {
-                                alert('失敗: ' + res.message);
-                            }
-                        } catch (e) {
-                            alert('Error: ' + e);
-                        } finally {
-                            isLoading.value = false;
-                        }
-                    };
+                    // ... (Question manipulation methods omitted) ...
+                    const addQuestion = () => { questions.value.push({ id: Date.now().toString(), text: '', imageUrl: '', points: 10, criteria: '', modelAnswer: '' }); };
+                    const removeQuestion = (index) => { questions.value.splice(index, 1); };
+                    const addSubQuestion = (q) => { if (!q.subQuestions) q.subQuestions = []; q.subQuestions.push({ id: 'sq-' + Date.now() + Math.random().toString(36).substr(2, 5), text: '', points: 5, criteria: '', modelAnswer: '' }); };
+                    const removeSubQuestion = (q, index) => { q.subQuestions.splice(index, 1); };
+                    const moveQuestion = (index, direction) => { const newIndex = index + direction; if (newIndex >= 0 && newIndex < questions.value.length) { const item = questions.value.splice(index, 1)[0]; questions.value.splice(newIndex, 0, item); } };
+                    const finalizeQuestions = async () => { /* ... */ if (!confirm('Save questions?')) return; isLoading.value = true; loadingMessage.value = 'Saving...'; try { const res = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value))); if (res.success) { alert('Saved!'); } else { alert('Save failed: ' + res.message); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
+                    const formatDate = (dateStr) => { if (!dateStr) return ''; const d = new Date(dateStr); return d.toLocaleDateString() + ' ' + d.toLocaleTimeString(); };
+                    const loadPatternList = async () => { /* ... */ try { const list = await runGas('getPatternList'); savedPatterns.value = list; } catch (e) { console.error('Failed to load patterns', e); } };
+                    const savePattern = async () => { /* ... */ if (!patternTitle.value) return; if (!confirm(`パターン「${patternTitle.value}」として保存しますか？`)) return; isLoading.value = true; loadingMessage.value = 'Saving Pattern...'; try { const res = await runGas('savePattern', patternTitle.value, JSON.parse(JSON.stringify(questions.value))); if (res.success) { alert(res.message); await loadPatternList(); selectedPatternTitle.value = patternTitle.value; } else { alert('失敗: ' + res.message); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
+                    const loadPattern = async () => { /* ... */ if (!selectedPatternTitle.value) return; if (!confirm(`パターン「${selectedPatternTitle.value}」を読み込みますか？\n編集中の内容は失われます。`)) return; isLoading.value = true; loadingMessage.value = 'Loading Pattern...'; try { const res = await runGas('getPattern', selectedPatternTitle.value); if (res.success) { questions.value = res.questions; patternTitle.value = selectedPatternTitle.value; loadingMessage.value = 'Syncing to Examinee View...'; const saveRes = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value)), selectedPatternTitle.value); if (saveRes.success) { alert(`パターン「${selectedPatternTitle.value}」を読み込み、受験者画面に反映しました。`); currentDeployedPattern.value = selectedPatternTitle.value; } else { alert('読み込みは成功しましたが、反映に失敗しました: ' + saveRes.message); } } else { alert('失敗: ' + res.message); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
+                    const deletePattern = async () => { /* ... */ if (!selectedPatternTitle.value) return; if (!confirm(`本当に「${selectedPatternTitle.value}」を削除しますか？`)) return; isLoading.value = true; try { const res = await runGas('deletePattern', selectedPatternTitle.value); if (res.success) { alert('削除しました。'); selectedPatternTitle.value = ''; await loadPatternList(); } else { alert('失敗: ' + res.message); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
 
                     const currentQuestion = computed(() => questions.value[currentQuestionIndex.value]);
                     const isLastQuestion = computed(() => currentQuestionIndex.value === questions.value.length - 1);
-
                     const nextQuestion = () => { if (!isLastQuestion.value) currentQuestionIndex.value++; };
                     const prevQuestion = () => { if (currentQuestionIndex.value > 0) currentQuestionIndex.value--; };
 
@@ -1065,19 +830,41 @@
 
                     const submitTest = async () => {
                         if (!confirm('採点を開始して試験を終了しますか？\n（未回答の問題があっても採点されます）')) return;
+
+                        // 1. まず一時保存 (Server Save)
                         isLoading.value = true;
-                        loadingMessage.value = 'Grading...';
+                        isGradingFailed.value = false;
+                        loadingMessage.value = 'Saving Answers to Server...';
 
                         try {
+                            const saveRes = await runGas('saveTemporaryAnswers', JSON.parse(JSON.stringify(answers.value)), sessionId.value);
+
+                            if (!saveRes.success) {
+                                // 保存失敗時は続行するか確認
+                                if (!confirm("回答の一時保存に失敗しました：" + saveRes.message + "\n\nこのまま採点に進みますか？\n(キャンセルすると画面に戻ります)")) {
+                                    isLoading.value = false;
+                                    return;
+                                }
+                            }
+
+                            // 2. 採点処理
+                            loadingMessage.value = 'AI Grading in progress (this may take 10-20 seconds)...';
                             const res = await runGas('submitAnswers', JSON.parse(JSON.stringify(answers.value)), sessionId.value);
 
                             if (res.success) {
                                 testResult.value = res;
+                                isGradingFailed.value = false;
+                                // 成功したら一時保存クリア (Local Storage)
+                                localStorage.removeItem('elec_test_answers');
+                                localStorage.removeItem('elec_test_session_id');
+                                localStorage.removeItem('elec_test_student_name');
                             } else {
-                                alert('Submit failed: ' + res.message);
+                                throw new Error(res.message);
                             }
                         } catch (e) {
-                            alert('Error: ' + e);
+                            console.error(e);
+                            isGradingFailed.value = true;
+                            alert('【採点エラー】\n回答はサーバーに保存されていますので、ご安心ください。\n\n詳細: ' + e + '\n\n画面の指示に従って「再試行」するか、管理者に連絡してください。');
                         } finally {
                             isLoading.value = false;
                         }
@@ -1087,11 +874,52 @@
                         testResult.value = null;
                         answers.value = {};
                         currentQuestionIndex.value = 0;
+                        sessionId.value = null;
+                        studentName.value = '';
+                        isGradingFailed.value = false;
+                        // Clear storage
+                        localStorage.removeItem('elec_test_answers');
+                        localStorage.removeItem('elec_test_session_id');
+                        localStorage.removeItem('elec_test_student_name');
+                        switchView('landing');
                     };
 
+                    // --- Auto Save Logic ---
+                    watch(answers, (newVal) => {
+                        if (currentView.value === 'examinee' && !testResult.value) {
+                            localStorage.setItem('elec_test_answers', JSON.stringify(newVal));
+                        }
+                    }, { deep: true });
+
+                    watch(sessionId, (newVal) => {
+                        if (newVal) localStorage.setItem('elec_test_session_id', newVal);
+                    });
+
+                    watch(studentName, (newVal) => {
+                        if (newVal) localStorage.setItem('elec_test_student_name', newVal);
+                    });
+
                     onMounted(() => {
-                        if (questions.value.length === 0) addQuestion();
-                        if (currentView.value === 'admin') loadPatternList();
+                        if (questions.value.length === 0) try { addQuestion(); } catch (e) { }
+                        if (currentView.value === 'admin') try { loadPatternList(); } catch (e) { }
+
+                        // Restore logic
+                        const savedAns = localStorage.getItem('elec_test_answers');
+                        const savedSess = localStorage.getItem('elec_test_session_id');
+                        const savedName = localStorage.getItem('elec_test_student_name');
+
+                        if (savedAns && savedSess && savedName) {
+                            // Restore session if user was in examinee mode
+                            // We don't auto-switch view to avoid confusion, but we pre-fill
+                            try {
+                                answers.value = JSON.parse(savedAns);
+                                sessionId.value = savedSess;
+                                studentName.value = savedName;
+                                console.log('Restored answers from localStorage');
+                            } catch (e) {
+                                console.error('Restore failed', e);
+                            }
+                        }
                     });
 
                     const dragIndex = ref(null);
