@@ -45,7 +45,7 @@ function saveQuestions(questions) {
 
         // 既存データをクリアしてヘッダーを設定
         sheet.clear();
-        const header = ['ID', 'Text', 'Image URL', 'Points', 'Criteria', 'SubQuestionsJSON'];
+        const header = ['ID', 'Text', 'Image URL', 'Points', 'Criteria', 'SubQuestionsJSON', 'ModelAnswer'];
         sheet.appendRow(header);
 
         // データ書き込み
@@ -56,9 +56,10 @@ function saveQuestions(questions) {
                 q.imageUrl || '',
                 q.points,
                 q.criteria || '',
-                q.subQuestions ? JSON.stringify(q.subQuestions) : '' // 小問をJSONとして保存
+                q.subQuestions ? JSON.stringify(q.subQuestions) : '', // 小問をJSONとして保存
+                q.modelAnswer || '' // Col 7: 表示用模範解答
             ]);
-            sheet.getRange(2, 1, rows.length, 6).setValues(rows);
+            sheet.getRange(2, 1, rows.length, 7).setValues(rows);
         }
 
         return { success: true, message: '問題を保存しました。' };
@@ -82,15 +83,9 @@ function getQuestions() {
         const lastRow = sheet.getLastRow();
         if (lastRow < 2) return []; // データがない場合
 
-        // 6列目まで取得するように変更 (Col F: SubQuestionsJSON)
-        // 既存シートが5列しかない場合のエラー回避のため、getRangeの列数はシートの最大列数などを考慮するのが安全だが、
-        // ここでは新規保存で列が増える前提とする。読み込み時に列が足りない場合は空文字が返ることを期待。
-        // SpreadsheetAppでは指定範囲がシート範囲外だとエラーになる可能性があるが、データがある範囲(getDataRange)を使う手もある。
-        // ここでは安全のため getDataRange を使いつつ、必要な部分をマップするアプローチに変更するか、
-        // あるいは6列固定で取得する。列が存在しない場合はエラーになるので、列数チェックを入れる。
-
+        // 7列目まで取得 (Col G: ModelAnswer)
         const maxCols = sheet.getMaxColumns();
-        const numColsToGet = Math.min(6, maxCols); // 最大でも6列
+        const numColsToGet = Math.min(7, maxCols); // 最大でも7列
 
         const data = sheet.getRange(2, 1, lastRow - 1, numColsToGet).getValues();
 
@@ -105,13 +100,17 @@ function getQuestions() {
                 }
             }
 
+            // Col 7 (index 6) が modelAnswer
+            const modelAnswer = (row.length >= 7) ? row[6] : '';
+
             return {
                 id: row[0],
                 text: row[1],
                 imageUrl: row[2],
                 points: Number(row[3]),
                 criteria: row[4] || '',
-                subQuestions: subQuestions
+                subQuestions: subQuestions,
+                modelAnswer: modelAnswer
             };
         });
     } catch (e) {
@@ -144,18 +143,20 @@ function submitAnswers(answers) {
 
     } catch (e) {
         console.error(e);
-        return { success: false, message: '送信エラー: ' + e.toString() };
+        const errorMsg = e.toString();
+        // ユーザーにわかりやすいエラーメッセージを返す
+        return { success: false, message: '送信エラー: ' + errorMsg };
     }
 }
 
 /**
  * Gemini APIと通信して採点を行う内部関数
  */
+/**
+ * Gemini APIと通信して採点を行う内部関数 (一括採点版)
+ */
 function _gradeWithGemini(questions, answers) {
     const apiKey = PropertiesService.getScriptProperties().getProperty(SCRIPT_PROP_KEY_GEMINI_API_KEY);
-
-    // マッピング結果用
-    const results = [];
 
     // APIキーがない場合はモック採点を行う（動作確認用）
     if (!apiKey) {
@@ -177,146 +178,139 @@ function _gradeWithGemini(questions, answers) {
         });
     }
 
-    for (const q of questions) {
-        // 小問がある場合の処理
+    // プロンプト構築用に問題をフラット化してリスト作成
+    const problemList = [];
+    questions.forEach(q => {
         if (q.subQuestions && q.subQuestions.length > 0) {
-            const result = _gradeSubQuestions(q, answers[q.id] || {}, apiKey);
-            if (result) results.push(...result);
-            // APIレート制限考慮
-            Utilities.sleep(1000);
-            continue;
-        }
-
-        // 従来の問題（小問なし）の処理
-        const studentAnswer = answers[q.id] || "";
-
-        // 文字列でない場合(回答形式不正)への対応
-        const answerText = typeof studentAnswer === 'string' ? studentAnswer : JSON.stringify(studentAnswer);
-
-        // 空欄の場合は0点
-        if (!answerText.trim()) {
-            results.push({ questionId: q.id, score: 0, reason: "未回答" });
-            continue;
-        }
-
-        try {
-            const prompt = `
-あなたは電気工学の専門家かつ採点者です。以下の試験問題に対する学生の回答を採点してください。
-
-【問題】
-${q.text}
-(配点: ${q.points}点)
-
-【採点基準・模範解答】
-${q.criteria ? q.criteria : '特になし（一般的な専門知識に基づいて採点してください）'}
-
-【学生の回答】
-${answerText}
-
-【採点フォーマット（厳守）】
-以下のJSON形式のみを出力してください。Markdownのコードブロックは不要です。
-**注意: 数式などでバックスラッシュを使用する場合は、必ず "\\\\" (二重) にしてエスケープしてください。**
-{"score": 数値(0-${q.points}), "reason": "採点理由とフィードバック（100文字程度）"}
-`;
-
-            const aiResponse = _callGeminiApi(apiKey, prompt);
-            results.push({
-                questionId: q.id,
-                score: aiResponse.score,
-                reason: aiResponse.reason
+            q.subQuestions.forEach(sq => {
+                problemList.push({
+                    type: 'sub',
+                    qId: q.id,
+                    sqId: sq.id,
+                    text: `[親問題]: ${q.text}\n[小問題]: ${sq.text}`,
+                    points: sq.points,
+                    criteria: sq.criteria || '特になし',
+                    studentAnswer: (answers[q.id] && answers[q.id][sq.id]) || ""
+                });
             });
-
-        } catch (apiError) {
-            console.error("Gemini API Error for Q " + q.id, apiError);
-            results.push({ questionId: q.id, score: 0, reason: "採点エラー: " + apiError.toString() });
+        } else {
+            problemList.push({
+                type: 'normal',
+                qId: q.id,
+                sqId: null,
+                text: q.text,
+                points: q.points,
+                criteria: q.criteria || '特になし',
+                studentAnswer: answers[q.id] || ""
+            });
         }
-
-        Utilities.sleep(1000);
-    }
-
-    return results;
-}
-
-/**
- * 小問付き問題の採点
- */
-function _gradeSubQuestions(question, answerObj, apiKey) {
-    // answerObj は k:v 形式を想定 (subId: answerText)
-
-    // 全空欄チェック等は省略し、AIに一括で投げます
-
-    // プロンプト構築
-    let subQsText = "";
-    let totalPoints = 0;
-
-    question.subQuestions.forEach((sq, idx) => {
-        subQsText += `
-小問(${idx + 1}): ${sq.text} (配点: ${sq.points}点)
-基準: ${sq.criteria || 'なし'}
-学生の回答: ${answerObj[sq.id] || '(未回答)'}
-`;
-        totalPoints += Number(sq.points);
     });
 
-    const prompt = `
-あなたは電気工学の専門家かつ採点者です。以下の試験問題（複数の小問あり）に対する学生の回答を採点してください。
-親問題の共通テキストがある場合は考慮してください。
+    if (problemList.length === 0) return [];
 
-【親問題テキスト】
-${question.text}
+    // 一括送信だと429エラー(Resource exhausted)になるため、分割処理(チャンク化)を行う
+    const CHUNK_SIZE = 5; // 5問ずつ処理
+    let allResults = [];
 
-【小問リストと回答】
-${subQsText}
+    // チャンクごとの処理ループ
+    for (let i = 0; i < problemList.length; i += CHUNK_SIZE) {
+        const chunk = problemList.slice(i, i + CHUNK_SIZE);
 
-【採点フォーマット（厳守）】
-以下のJSON形式のみを出力してください。Markdownのコードブロックは不要です。
-配列で返してください。
-[
-  { "subQIndex": 0, "score": 数値, "reason": "フィードバック" },
-  { "subQIndex": 1, "score": 数値, "reason": "フィードバック" },
-  ...
-]
-※ subQIndexは0始まりのインデックスで対応させてください。
+        let promptText = `
+あなたは電気工学の専門家かつ厳格な採点者です。以下の試験問題に対する学生の回答を一括で採点してください。
+
+【採点対象リスト】
 `;
 
-    try {
-        const aiResponse = _callGeminiApi(apiKey, prompt);
+        chunk.forEach((p, index) => {
+            const ans = typeof p.studentAnswer === 'string' ? p.studentAnswer : JSON.stringify(p.studentAnswer);
+            promptText += `
+---
+No.${index + 1}
+[問題ID: ${p.qId}${p.sqId ? '_' + p.sqId : ''}]
+問題文: ${p.text}
+配点: ${p.points}点
+採点基準: ${p.criteria}
+学生の回答: ${ans || '(未回答)'}
+`;
+        });
 
-        // 配列であることを確認
-        if (!Array.isArray(aiResponse)) {
-            throw new Error("API response is not an array");
+        promptText += `
+---
+
+【採点フォーマット（厳守）】
+以下のJSON配列形式のみを出力してください。Markdownのコードブロックは不要です。
+必ず "No.1" から "No.${chunk.length}" までの全ての採点結果を含めてください。
+
+[
+  { "index": 0, "score": 数値, "reason": "短いフィードバック" },
+  { "index": 1, "score": 数値, "reason": "短いフィードバック" },
+  ...
+]
+
+※ indexは0始まり(No.1に対応)で、入力リストの順序と一致させてください。
+※ 未回答の場合は0点としてください。
+※ 理由(reason)は学生への直接的なフィードバックとして適切かつ簡潔な日本語で記述してください。
+`;
+
+        try {
+            // レート制限回避のため、2回目以降は少し待機
+            if (i > 0) Utilities.sleep(1000);
+
+            const aiResponse = _callGeminiApi(apiKey, promptText);
+            let chunkResults = [];
+
+            if (!Array.isArray(aiResponse)) {
+                // 単一オブジェクト救済
+                chunkResults = Array.isArray(aiResponse) ? aiResponse : [aiResponse];
+            } else {
+                chunkResults = aiResponse;
+            }
+
+            // チャンク内インデックスを元にマッピング
+            const mappedChunk = chunkResults.map(r => {
+                const idx = r.index;
+                // インデックス範囲チェック
+                if (typeof idx !== 'number' || idx < 0 || idx >= chunk.length) return null;
+
+                const originalParam = chunk[idx];
+                return {
+                    questionId: originalParam.qId,
+                    subQuestionId: originalParam.sqId,
+                    score: Number(r.score) || 0,
+                    reason: r.reason || ''
+                };
+            }).filter(Boolean);
+
+            allResults = allResults.concat(mappedChunk);
+
+        } catch (apiError) {
+            console.error(`Gemini API Batch Error (Chunk ${i / CHUNK_SIZE + 1})`, apiError);
+            // エラー時はこのチャンク分を0点で埋める
+            const fallback = chunk.map(p => ({
+                questionId: p.qId,
+                subQuestionId: p.sqId,
+                score: 0,
+                reason: "採点システムエラー: " + apiError.message
+            }));
+            allResults = allResults.concat(fallback);
         }
-
-        return aiResponse.map(r => {
-            const sq = question.subQuestions[r.subQIndex];
-            if (!sq) return null;
-            return {
-                questionId: question.id,
-                subQuestionId: sq.id,
-                score: r.score,
-                reason: r.reason
-            };
-        }).filter(Boolean);
-
-    } catch (e) {
-        console.error("Gemini API Error for Q " + question.id, e);
-        // エラー時は全小問0点
-        return question.subQuestions.map(sq => ({
-            questionId: question.id,
-            subQuestionId: sq.id,
-            score: 0,
-            reason: "採点エラー: " + e.toString()
-        }));
     }
+
+    return allResults;
 }
 
 /**
  * Gemini API呼び出し共通化 (リトライ処理付き)
  */
 function _callGeminiApi(apiKey, prompt) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent?key=${apiKey}`;
+    // ユーザー環境で利用可能な最新モデル (Gemini 3.0 Flash Preview) に切り替え
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
     const payload = {
-        contents: [{ parts: [{ text: prompt }] }]
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+            response_mime_type: "application/json"
+        }
     };
 
     const options = {
@@ -326,7 +320,7 @@ function _callGeminiApi(apiKey, prompt) {
         'muteHttpExceptions': true
     };
 
-    const MAX_RETRIES = 5;
+    const MAX_RETRIES = 3;
     let retryCount = 0;
 
     // リトライループ
@@ -422,8 +416,10 @@ function testGeminiConnection() {
     const apiKey = PropertiesService.getScriptProperties().getProperty(SCRIPT_PROP_KEY_GEMINI_API_KEY);
 
     if (!apiKey) {
-        console.error("【エラー】APIキーが設定されていません。スクリプトプロパティを確認してください。");
-        return;
+        return {
+            success: false,
+            message: "【エラー】APIキーが設定されていません。GASの「プロジェクトの設定」>「スクリプトプロパティ」を確認してください。"
+        };
     }
 
     // 利用可能なモデル一覧を取得するAPI
@@ -434,23 +430,59 @@ function testGeminiConnection() {
         const code = response.getResponseCode();
         const text = response.getContentText();
 
-        console.log(`レスポンスコード: ${code}`);
-
         if (code === 200) {
             const data = JSON.parse(text);
-            console.log("【成功】接続できました。利用可能なモデル一覧:");
-            data.models.forEach(m => {
-                // "models/gemini-1.5-flash" のような形式で出力されます
-                if (m.name.includes('gemini')) {
-                    console.log(` - ${m.name}`);
-                }
-            });
+            const models = data.models
+                .filter(m => m.name.includes('gemini'))
+                .map(m => m.name)
+                .join(', ');
+            return {
+                success: true,
+                message: "接続成功！利用可能モデル: " + models
+            };
         } else {
-            console.error(`【失敗】エラーが返ってきました: ${text}`);
-            console.log("ヒント: エラー400ならAPIキーが無効、403なら権限不足、404ならURL間違いの可能性があります");
+            return {
+                success: false,
+                message: `エラー (${code}): ${text}`
+            };
         }
 
     } catch (e) {
-        console.error("【通信エラー】: " + e.toString());
+        return {
+            success: false,
+            message: "通信エラー: " + e.toString()
+        };
+    }
+}
+
+/**
+ * デバッグ用: 採点ロジック単体テスト
+ */
+function testGrading() {
+    const dummyQuestions = [{
+        id: 'debug_q1',
+        text: '電流の単位は何か？記号で答えなさい。',
+        points: 10,
+        criteria: '正解は「A」または「アンペア」'
+    }];
+    const dummyAnswers = { 'debug_q1': 'A' };
+
+    try {
+        const start = new Date();
+        // testGradingの中で submitAnswers を呼んでみる（サーバー内部での呼び出しテスト）
+        const results = submitAnswers(dummyAnswers);
+        const end = new Date();
+        const duration = (end - start) / 1000;
+
+        return {
+            success: true,
+            message: `採点テスト(Internal submitAnswers) 成功 (${duration}秒)`,
+            details: results
+        };
+    } catch (e) {
+        return {
+            success: false,
+            message: "採点テスト失敗: " + e.toString()
+        };
     }
 }

@@ -90,9 +90,22 @@
             <div class="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
                 <h1 class="text-xl font-bold text-gray-800 tracking-tight flex items-center">
                     <i class="fa-solid fa-bolt text-yellow-500 mr-2"></i>
-                    ElecTest System
+                    ElecTest System <span class="ml-2 text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded">v2.1</span>
                 </h1>
-                <div class="space-x-2">
+                <div class="space-x-2 flex items-center">
+                    <!-- Connection Test Button (Admin Only) -->
+                    <button v-if="currentView === 'admin'" @click="checkConnection"
+                        class="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1 rounded-full text-xs font-medium transition flex items-center gap-1 border border-gray-300"
+                        title="API接続テスト">
+                        <i class="fa-solid fa-network-wired"></i> 接続テスト
+                    </button>
+                    <button v-if="currentView === 'admin'" @click="checkGrading"
+                        class="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1 rounded-full text-xs font-medium transition flex items-center gap-1 border border-gray-300 ml-1"
+                        title="採点ロジック単体テスト">
+                        <i class="fa-solid fa-bug"></i> 採点テスト
+                    </button>
+                    <div class="w-px h-6 bg-gray-300 mx-1"></div>
+
                     <button @click="switchView('admin')"
                         :class="['px-3 py-1 rounded-full text-sm font-medium transition', currentView === 'admin' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200']">
                         管理者
@@ -195,11 +208,17 @@
                                     </div>
                                 </div>
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">採点基準・模範解答
-                                        (AIへの指示)</label>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">採点基準
+                                        (AIへの指示プロンプト)</label>
                                     <textarea v-model="q.criteria" rows="2"
                                         class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary outline-none transition"
                                         placeholder="例: 「オームの法則」という言葉があれば正解とする。計算式が合っていれば部分点を与える。"></textarea>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">模範解答 (学生に表示)</label>
+                                    <textarea v-model="q.modelAnswer" rows="2"
+                                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-green-500 outline-none transition bg-green-50"
+                                        placeholder="例: V = IR = 10 * 2 = 20[V]"></textarea>
                                 </div>
                             </div>
                             <div class="h-px bg-gray-200 my-4"></div>
@@ -240,10 +259,16 @@
                                                         class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary outline-none">
                                                 </div>
                                                 <div>
-                                                    <label class="text-xs font-bold text-gray-500">採点基準</label>
+                                                    <label class="text-xs font-bold text-gray-500">採点基準(AI)</label>
                                                     <input type="text" v-model="subQ.criteria"
                                                         class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary outline-none"
-                                                        placeholder="基準...">
+                                                        placeholder="プロンプト...">
+                                                </div>
+                                                <div class="col-span-2">
+                                                    <label class="text-xs font-bold text-gray-500">模範解答(表示用)</label>
+                                                    <input type="text" v-model="subQ.modelAnswer"
+                                                        class="w-full px-2 py-1 text-sm border border-green-300 rounded focus:ring-1 focus:ring-green-500 outline-none bg-green-50"
+                                                        placeholder="正解...">
                                                 </div>
                                             </div>
                                         </div>
@@ -253,163 +278,163 @@
                             </div>
                         </div>
                     </div>
+                    <button @click="addQuestion"
+                        class="w-full py-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-primary hover:text-primary hover:bg-blue-50 transition flex flex-col items-center justify-center gap-2">
+                        <i class="fa-solid fa-circle-plus text-2xl"></i>問題を追加
+                    </button>
+                    <div class="h-10"></div>
                 </div>
-                <button @click="addQuestion"
-                    class="w-full py-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-primary hover:text-primary hover:bg-blue-50 transition flex flex-col items-center justify-center gap-2">
-                    <i class="fa-solid fa-circle-plus text-2xl"></i>問題を追加
-                </button>
-                <div class="h-10"></div>
-            </div>
 
-            <div v-else-if="currentView === 'examinee'" class="space-y-6">
-                <div v-if="testResult" class="space-y-6">
-                    <div class="bg-white rounded-xl shadow-lg border border-teal-100 p-8 text-center">
-                        <i class="fa-solid fa-trophy text-5xl text-yellow-400 mb-4"></i>
-                        <h2 class="text-2xl font-bold text-gray-800">試験終了</h2>
-                        <p class="text-gray-500 mt-2">お疲れ様でした。採点結果は以下の通りです。</p>
-                        <div class="mt-6 text-4xl font-black text-primary">
-                            {{ testResult.totalScore }} <span class="text-xl text-gray-400 font-normal">/ {{
-                                totalMaxScore }} 点</span>
+                <div v-else-if="currentView === 'examinee'" class="space-y-6">
+                    <div v-if="testResult" class="space-y-6">
+                        <div class="bg-white rounded-xl shadow-lg border border-teal-100 p-8 text-center">
+                            <i class="fa-solid fa-trophy text-5xl text-yellow-400 mb-4"></i>
+                            <h2 class="text-2xl font-bold text-gray-800">試験終了</h2>
+                            <p class="text-gray-500 mt-2">お疲れ様でした。採点結果は以下の通りです。</p>
+                            <div class="mt-6 text-4xl font-black text-primary">
+                                {{ testResult.totalScore }} <span class="text-xl text-gray-400 font-normal">/ {{
+                                    totalMaxScore }} 点</span>
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="space-y-4">
-                        <h3 class="font-bold text-gray-700 text-lg">詳細フィードバック</h3>
-                        <div v-for="(res, idx) in testResult.results" :key="idx"
-                            class="bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
+                        <div class="space-y-4">
+                            <h3 class="font-bold text-gray-700 text-lg">詳細フィードバック</h3>
+                            <div v-for="(res, idx) in testResult.results" :key="idx"
+                                class="bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
 
-                            <div class="flex justify-between items-start mb-4">
-                                <div class="flex items-center gap-3">
-                                    <span class="font-bold text-gray-500">Q{{ idx + 1 }}</span>
-                                    <span
-                                        :class="['px-2 py-1 rounded text-xs font-bold border flex items-center gap-1', getResultStatus(res).class]">
-                                        <i :class="['fa-solid', getResultStatus(res).icon]"></i>
-                                        {{ getResultStatus(res).label }}
-                                    </span>
-                                    <span v-if="res.subQuestionId"
-                                        class="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
-                                        小問 {{ getSubQNumber(res) }}
-                                    </span>
+                                <div class="flex justify-between items-start mb-4">
+                                    <div class="flex items-center gap-3">
+                                        <span class="font-bold text-gray-500">Q{{ idx + 1 }}</span>
+                                        <span
+                                            :class="['px-2 py-1 rounded text-xs font-bold border flex items-center gap-1', getResultStatus(res).class]">
+                                            <i :class="['fa-solid', getResultStatus(res).icon]"></i>
+                                            {{ getResultStatus(res).label }}
+                                        </span>
+                                        <span v-if="res.subQuestionId"
+                                            class="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
+                                            小問 {{ getSubQNumber(res) }}
+                                        </span>
+                                    </div>
+                                    <div class="text-xl font-bold"
+                                        :class="res.score > 0 ? 'text-primary' : 'text-gray-400'">
+                                        {{ res.score }} <span class="text-sm font-normal text-gray-500">点</span>
+                                    </div>
                                 </div>
-                                <div class="text-xl font-bold"
-                                    :class="res.score > 0 ? 'text-primary' : 'text-gray-400'">
-                                    {{ res.score }} <span class="text-sm font-normal text-gray-500">点</span>
+
+                                <div class="mb-4">
+                                    <p class="text-xs text-gray-400 font-bold mb-1">問題文</p>
+                                    <p class="text-gray-800 font-medium">{{ getQuestionText(res) }}</p>
                                 </div>
-                            </div>
 
-                            <div class="mb-4">
-                                <p class="text-xs text-gray-400 font-bold mb-1">問題文</p>
-                                <p class="text-gray-800 font-medium">{{ getQuestionText(res) }}</p>
-                            </div>
+                                <div class="mb-4">
+                                    <p class="text-xs text-gray-400 font-bold mb-1">あなたの回答</p>
+                                    <p
+                                        class="text-gray-700 p-3 bg-gray-50 rounded border border-gray-100 whitespace-pre-wrap">
+                                        {{ getUserAnswer(res) }}</p>
+                                </div>
 
-                            <div class="mb-4">
-                                <p class="text-xs text-gray-400 font-bold mb-1">あなたの回答</p>
-                                <p
-                                    class="text-gray-700 p-3 bg-gray-50 rounded border border-gray-100 whitespace-pre-wrap">
-                                    {{ getUserAnswer(res) }}</p>
-                            </div>
+                                <div>
+                                    <p class="text-xs text-gray-400 font-bold mb-1">AI講評</p>
+                                    <div class="flex gap-3">
+                                        <i class="fa-solid fa-robot text-primary mt-1"></i>
+                                        <p class="text-gray-600 text-sm leading-relaxed"
+                                            style="font-family: 'Segoe UI Symbol', 'Noto Sans JP', sans-serif;">{{
+                                            res.reason }}</p>
+                                    </div>
+                                </div>
 
-                            <div>
-                                <p class="text-xs text-gray-400 font-bold mb-1">AI講評</p>
-                                <div class="flex gap-3">
-                                    <i class="fa-solid fa-robot text-primary mt-1"></i>
-                                    <p class="text-gray-600 text-sm leading-relaxed"
+                                <div v-if="getResultStatus(res).label !== '正解'"
+                                    class="mt-4 pt-4 border-t border-gray-100">
+                                    <p class="text-xs text-red-500 font-bold mb-1">模範解答</p>
+                                    <p class="text-gray-700 bg-red-50 p-3 rounded border border-red-100 whitespace-pre-wrap text-sm"
                                         style="font-family: 'Segoe UI Symbol', 'Noto Sans JP', sans-serif;">{{
-                                        res.reason }}</p>
+                                        getModelAnswer(res) }}</p>
+                                </div>
+                            </div>
+                        </div>
+                        <button @click="resetTest"
+                            class="w-full bg-gray-600 text-white py-3 rounded-lg hover:bg-gray-700 transition">終了して戻る</button>
+                    </div>
+
+                    <div v-else class="space-y-6">
+                        <div v-if="questions.length === 0" class="text-center py-10 text-gray-500">
+                            <p>現在、問題が登録されていません。</p>
+                        </div>
+
+                        <div v-else>
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-sm font-medium text-gray-500">問題 {{ currentQuestionIndex + 1 }} / {{
+                                    questions.length }}</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2.5 mb-6">
+                                <div class="bg-accent h-2.5 rounded-full transition-all duration-300"
+                                    :style="{ width: ((currentQuestionIndex + 1) / questions.length) * 100 + '%' }">
                                 </div>
                             </div>
 
-                            <div v-if="getResultStatus(res).label !== '正解' && getCriteria(res)"
-                                class="mt-4 pt-4 border-t border-gray-100">
-                                <p class="text-xs text-red-400 font-bold mb-1">模範解答・採点基準</p>
-                                <p class="text-gray-700 bg-red-50 p-3 rounded border border-red-100 whitespace-pre-wrap text-sm"
-                                    style="font-family: 'Segoe UI Symbol', 'Noto Sans JP', sans-serif;">{{
-                                    getCriteria(res) }}</p>
-                            </div>
-                        </div>
-                    </div>
-                    <button @click="resetTest"
-                        class="w-full bg-gray-600 text-white py-3 rounded-lg hover:bg-gray-700 transition">終了して戻る</button>
-                </div>
+                            <div v-if="currentQuestion"
+                                class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+                                <div class="p-6 md:p-8 space-y-6">
+                                    <h3 class="text-xl font-bold text-gray-800 leading-relaxed">{{ currentQuestion.text
+                                        }}</h3>
 
-                <div v-else class="space-y-6">
-                    <div v-if="questions.length === 0" class="text-center py-10 text-gray-500">
-                        <p>現在、問題が登録されていません。</p>
-                    </div>
+                                    <div v-if="currentQuestion.imageUrl"
+                                        class="flex justify-center bg-gray-50 p-4 rounded-lg">
+                                        <img :src="processImageUrl(currentQuestion.imageUrl)"
+                                            class="max-h-64 object-contain rounded shadow-sm"
+                                            referrerpolicy="no-referrer" @error="handleImageError">
+                                    </div>
 
-                    <div v-else>
-                        <div class="flex items-center justify-between mb-2">
-                            <span class="text-sm font-medium text-gray-500">問題 {{ currentQuestionIndex + 1 }} / {{
-                                questions.length }}</span>
-                        </div>
-                        <div class="w-full bg-gray-200 rounded-full h-2.5 mb-6">
-                            <div class="bg-accent h-2.5 rounded-full transition-all duration-300"
-                                :style="{ width: ((currentQuestionIndex + 1) / questions.length) * 100 + '%' }">
-                            </div>
-                        </div>
-
-                        <div v-if="currentQuestion"
-                            class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
-                            <div class="p-6 md:p-8 space-y-6">
-                                <h3 class="text-xl font-bold text-gray-800 leading-relaxed">{{ currentQuestion.text
-                                    }}</h3>
-
-                                <div v-if="currentQuestion.imageUrl"
-                                    class="flex justify-center bg-gray-50 p-4 rounded-lg">
-                                    <img :src="processImageUrl(currentQuestion.imageUrl)"
-                                        class="max-h-64 object-contain rounded shadow-sm" referrerpolicy="no-referrer"
-                                        @error="handleImageError">
-                                </div>
-
-                                <div class="mt-6">
-                                    <div v-if="currentQuestion.subQuestions && currentQuestion.subQuestions.length > 0"
-                                        class="space-y-6">
-                                        <div v-for="(sq, sIdx) in currentQuestion.subQuestions" :key="sq.id"
-                                            class="space-y-2">
-                                            <div class="flex items-start gap-2">
-                                                <span class="font-bold text-lg text-primary">{{ numberedCircle(sIdx + 1)
-                                                    }}</span>
-                                                <p class="font-bold text-gray-800 pt-1">{{ sq.text }}</p>
+                                    <div class="mt-6">
+                                        <div v-if="currentQuestion.subQuestions && currentQuestion.subQuestions.length > 0"
+                                            class="space-y-6">
+                                            <div v-for="(sq, sIdx) in currentQuestion.subQuestions" :key="sq.id"
+                                                class="space-y-2">
+                                                <div class="flex items-start gap-2">
+                                                    <span class="font-bold text-lg text-primary">{{ numberedCircle(sIdx
+                                                        + 1)
+                                                        }}</span>
+                                                    <p class="font-bold text-gray-800 pt-1">{{ sq.text }}</p>
+                                                </div>
+                                                <textarea v-model="getAnswerRef(currentQuestion.id, sq.id).value"
+                                                    class="w-full h-24 px-4 py-3 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-accent outline-none transition resize-none"
+                                                    placeholder="回答を入力..."></textarea>
                                             </div>
-                                            <textarea v-model="getAnswerRef(currentQuestion.id, sq.id).value"
-                                                class="w-full h-24 px-4 py-3 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-accent outline-none transition resize-none"
-                                                placeholder="回答を入力..."></textarea>
+                                        </div>
+                                        <div v-else>
+                                            <label class="block text-sm font-semibold text-gray-700 mb-2">回答欄</label>
+                                            <textarea v-model="answers[currentQuestion.id]"
+                                                class="w-full h-48 px-4 py-3 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-accent outline-none transition resize-none"
+                                                placeholder="ここに記述してください..."></textarea>
                                         </div>
                                     </div>
-                                    <div v-else>
-                                        <label class="block text-sm font-semibold text-gray-700 mb-2">回答欄</label>
-                                        <textarea v-model="answers[currentQuestion.id]"
-                                            class="w-full h-48 px-4 py-3 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-accent outline-none transition resize-none"
-                                            placeholder="ここに記述してください..."></textarea>
-                                    </div>
                                 </div>
-                            </div>
-                            <div
-                                class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-between items-center">
-                                <button @click="prevQuestion" :disabled="currentQuestionIndex === 0"
-                                    class="px-5 py-2 rounded-lg text-gray-600 hover:bg-gray-200 disabled:text-gray-300">
-                                    前へ
-                                </button>
-
-                                <div class="flex items-center gap-3">
-                                    <button v-if="!isLastQuestion" @click="nextQuestion"
-                                        class="bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 px-6 py-2.5 rounded-lg shadow-sm font-medium transition">
-                                        次へ
+                                <div
+                                    class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-between items-center">
+                                    <button @click="prevQuestion" :disabled="currentQuestionIndex === 0"
+                                        class="px-5 py-2 rounded-lg text-gray-600 hover:bg-gray-200 disabled:text-gray-300">
+                                        前へ
                                     </button>
 
-                                    <button v-else @click="submitTest"
-                                        class="bg-accent hover:bg-teal-700 text-white px-8 py-2.5 rounded-lg shadow-lg font-bold transition">
-                                        採点する
-                                    </button>
+                                    <div class="flex items-center gap-3">
+                                        <button v-if="!isLastQuestion" @click="nextQuestion"
+                                            class="bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 px-6 py-2.5 rounded-lg shadow-sm font-medium transition">
+                                            次へ
+                                        </button>
+
+                                        <button v-else @click="submitTest"
+                                            class="bg-accent hover:bg-teal-700 text-white px-8 py-2.5 rounded-lg shadow-lg font-bold transition">
+                                            採点する
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
 
-    </div>
-    </main>
+            </div>
+        </main>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.min.js"></script>
@@ -430,8 +455,16 @@
 
                 const runGas = (funcName, ...args) => {
                     return new Promise((resolve, reject) => {
+                        // タイムアウト設定 (300秒 = 5分)
+                        const timeoutId = setTimeout(() => {
+                            reject(new Error('Timeout: サーバーからの応答がありません。300秒以上経過しました。'));
+                        }, 300000);
+
                         if (!isGasEnv) {
+                            clearTimeout(timeoutId);
                             if (funcName === 'saveQuestions') return setTimeout(() => resolve({ success: true }), 500);
+                            if (funcName === 'testGeminiConnection') return setTimeout(() => resolve({ success: true, message: '(Mock) Connection OK' }), 500);
+                            if (funcName === 'testGrading') return setTimeout(() => resolve({ success: true, message: '(Mock) Grading OK', details: [] }), 1000);
                             if (funcName === 'getQuestions') return setTimeout(() => resolve([
                                 { id: '1', text: '(Local) Normal Question', points: 10 },
                                 {
@@ -453,10 +486,47 @@
                             return resolve();
                         }
                         google.script.run
-                            .withSuccessHandler(res => resolve(res))
-                            .withFailureHandler(err => reject(err))
+                            .withSuccessHandler(res => {
+                                clearTimeout(timeoutId);
+                                resolve(res);
+                            })
+                            .withFailureHandler(err => {
+                                clearTimeout(timeoutId);
+                                reject(err);
+                            })
                         [funcName](...args);
                     });
+                };
+
+                const checkConnection = async () => {
+                    isLoading.value = true;
+                    loadingMessage.value = 'Connecting to Gemini...';
+                    try {
+                        const res = await runGas('testGeminiConnection');
+                        alert(res.success ? '成功: ' + res.message : '失敗: ' + res.message);
+                    } catch (e) {
+                        alert('通信エラー: ' + e);
+                    } finally {
+                        isLoading.value = false;
+                    }
+                };
+
+                const checkGrading = async () => {
+                    isLoading.value = true;
+                    loadingMessage.value = 'Testing grading logic...';
+                    try {
+                        const res = await runGas('testGrading');
+                        if (res.success) {
+                            console.log(res.details);
+                            alert('成功: ' + res.message + '\n詳細はコンソールを確認してください');
+                        } else {
+                            alert('失敗: ' + res.message);
+                        }
+                    } catch (e) {
+                        alert('通信エラー: ' + e);
+                    } finally {
+                        isLoading.value = false;
+                    }
                 };
 
                 const processImageUrl = (url) => {
@@ -536,7 +606,14 @@
                 };
 
                 const addQuestion = () => {
-                    questions.value.push({ id: Date.now().toString(), text: '', imageUrl: '', points: 10, criteria: '' });
+                    questions.value.push({
+                        id: Date.now().toString(),
+                        text: '',
+                        imageUrl: '',
+                        points: 10,
+                        criteria: '',
+                        modelAnswer: ''
+                    });
                 };
 
                 const removeQuestion = (index) => {
@@ -549,7 +626,8 @@
                         id: 'sq-' + Date.now() + Math.random().toString(36).substr(2, 5),
                         text: '',
                         points: 5,
-                        criteria: ''
+                        criteria: '',
+                        modelAnswer: ''
                     });
                 };
 
@@ -593,8 +671,10 @@
                     if (!confirm('採点を開始して試験を終了しますか？\n（未回答の問題があっても採点されます）')) return;
                     isLoading.value = true;
                     loadingMessage.value = 'Grading...';
+
                     try {
                         const res = await runGas('submitAnswers', JSON.parse(JSON.stringify(answers.value)));
+
                         if (res.success) {
                             testResult.value = res;
                         } else {
@@ -699,15 +779,37 @@
                     return { label: '部分点', class: 'text-yellow-600 bg-yellow-50 border-yellow-200', icon: 'fa-circle-exclamation' };
                 };
 
+                const getCriteria = (res) => { // これはAIプロンプト（デバッグ用か、非表示にする）
+                    const q = questions.value.find(q => q.id === res.questionId);
+                    if (!q) return '';
+                    if (res.subQuestionId && q.subQuestions) {
+                        const sq = q.subQuestions.find(sq => sq.id === res.subQuestionId);
+                        return sq ? sq.criteria : '';
+                    }
+                    return q.criteria;
+                };
+
+                const getModelAnswer = (res) => {
+                    const q = questions.value.find(q => q.id === res.questionId);
+                    if (!q) return '';
+                    let target = q;
+                    if (res.subQuestionId && q.subQuestions) {
+                        const sq = q.subQuestions.find(sq => sq.id === res.subQuestionId);
+                        if (sq) target = sq;
+                    }
+                    // criteriaへのフォールバックを削除し、安全なデフォルトメッセージを表示
+                    return target.modelAnswer || '（模範解答設定なし）';
+                };
+
                 return {
                     currentView, isLoading, loadingMessage, questions, currentQuestionIndex,
                     answers, testResult, currentQuestion, isLastQuestion, totalMaxScore,
                     switchView, addQuestion, removeQuestion, moveQuestion, finalizeQuestions,
-                    nextQuestion, prevQuestion, submitTest, resetTest,
+                    nextQuestion, prevQuestion, submitTest, resetTest, checkConnection, checkGrading,
                     processImageUrl, handleImageError, insertChar,
                     handleDragStart, handleDragEnter, handleDragOver, handleDrop, dragIndex, dragTargetIndex,
                     addSubQuestion, removeSubQuestion, numberedCircle, getSubQNumber, getAnswerRef,
-                    getQuestionText, getUserAnswer, getResultStatus
+                    getQuestionText, getUserAnswer, getResultStatus, getCriteria, getModelAnswer
                 }
             }
         }).mount('#app');
