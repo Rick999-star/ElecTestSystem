@@ -179,7 +179,7 @@
                 <div v-if="currentView === 'admin'" class="space-y-6">
                     <div
                         class="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-gray-100 mb-6">
-                        <div>
+                        <div class="flex-shrink-0 mr-4">
                             <h2 class="text-lg font-semibold text-gray-800">問題パターン管理</h2>
                             <p class="text-sm text-gray-500">作成した問題をパターンとして保存・呼び出しできます</p>
                         </div>
@@ -219,359 +219,373 @@
                             </div>
                         </div>
                     </div>
-                </div>
 
-                <!-- Deployed Status -->
-                <div v-if="currentDeployedPattern"
-                    class="bg-teal-50 border border-teal-200 rounded-lg p-4 flex items-center justify-between animate-fade-in mx-4 mb-4">
-                    <div class="flex items-center gap-3">
-                        <div class="w-10 h-10 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center">
-                            <i class="fa-solid fa-satellite-dish text-lg"></i>
+
+                    <!-- Deployed Status -->
+                    <div v-if="currentDeployedPattern"
+                        class="bg-teal-50 border border-teal-200 rounded-lg p-4 flex items-center justify-between animate-fade-in mx-4 mb-4">
+                        <div class="flex items-center gap-3">
+                            <div
+                                class="w-10 h-10 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center">
+                                <i class="fa-solid fa-satellite-dish text-lg"></i>
+                            </div>
+                            <div>
+                                <p class="text-xs text-teal-600 font-bold uppercase tracking-wide">Currently Deployed
+                                </p>
+                                <p class="text-gray-800 font-bold text-lg">{{ currentDeployedPattern }}</p>
+                            </div>
                         </div>
-                        <div>
-                            <p class="text-xs text-teal-600 font-bold uppercase tracking-wide">Currently Deployed</p>
-                            <p class="text-gray-800 font-bold text-lg">{{ currentDeployedPattern }}</p>
-                        </div>
+                        <span
+                            class="px-3 py-1 bg-white text-teal-600 border border-teal-200 rounded-full text-xs font-bold shadow-sm">
+                            受験者画面に公開中
+                        </span>
                     </div>
-                    <span
-                        class="px-3 py-1 bg-white text-teal-600 border border-teal-200 rounded-full text-xs font-bold shadow-sm">
-                        受験者画面に公開中
-                    </span>
-                </div>
-            </div>
 
-            <div class="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-gray-100">
-                <div>
-                    <h2 class="text-lg font-semibold text-gray-800">問題作成</h2>
-                    <p class="text-sm text-gray-500">スプレッドシートに保存されます</p>
-                </div>
-                <button @click="finalizeQuestions"
-                    class="bg-primary hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg shadow-md transition flex items-center gap-2">
-                    <i class="fa-solid fa-save"></i> 問題を保存・確定
-                </button>
-            </div>
 
-            <div class="space-y-4">
-                <div v-for="(q, index) in questions" :key="q.id" draggable="true"
-                    @dragstart="handleDragStart($event, index)" @dragover="handleDragOver"
-                    @dragenter="handleDragEnter($event, index)" @drop="handleDrop(index)" :class="[
+                    <div
+                        class="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                        <div>
+                            <h2 class="text-lg font-semibold text-gray-800">問題作成</h2>
+                            <p class="text-sm text-gray-500">スプレッドシートに保存されます</p>
+                        </div>
+                        <button @click="finalizeQuestions"
+                            class="bg-primary hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg shadow-md transition flex items-center gap-2">
+                            <i class="fa-solid fa-save"></i> 問題を保存・確定
+                        </button>
+                    </div>
+
+                    <div class="space-y-4">
+                        <div v-for="(q, index) in questions" :key="q.id" draggable="true"
+                            @dragstart="handleDragStart($event, index)" @dragover="handleDragOver"
+                            @dragenter="handleDragEnter($event, index)" @drop="handleDrop(index)" :class="[
                                 'bg-white rounded-xl shadow-sm border overflow-hidden transition-all duration-200',
                                 dragIndex === index ? 'opacity-50 scale-95 border-primary border-dashed' : 'border-gray-200 hover:shadow-md',
                                 dragTargetIndex === index && dragIndex !== index ? 'ring-2 ring-primary ring-offset-2' : ''
                             ]">
-                    <div
-                        class="bg-gray-50 px-4 py-2 border-b border-gray-100 flex justify-between items-center cursor-move">
-                        <div class="flex items-center gap-3">
-                            <i class="fa-solid fa-grip-vertical text-gray-400"></i>
-                            <span class="font-bold text-gray-600">Q{{ index + 1 }}</span>
-                        </div>
-                        <div class="flex gap-2">
-                            <button @click="moveQuestion(index, -1)" :disabled="index === 0"
-                                class="text-gray-400 hover:text-primary w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 transition disabled:opacity-30">
-                                <i class="fa-solid fa-arrow-up"></i>
-                            </button>
-                            <button @click="moveQuestion(index, 1)" :disabled="index === questions.length - 1"
-                                class="text-gray-400 hover:text-primary w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 transition disabled:opacity-30">
-                                <i class="fa-solid fa-arrow-down"></i>
-                            </button>
-                            <div class="w-px bg-gray-300 mx-1 h-5 self-center"></div>
-                            <button @click="removeQuestion(index)"
-                                class="text-red-400 hover:text-red-600 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-50 transition">
-                                <i class="fa-solid fa-trash"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <div class="p-5 space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">問題文</label>
-                            <textarea v-model="q.text" rows="3" id="'q-text-' + index"
-                                class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary outline-none transition"></textarea>
-                            <!-- 記号入力ツールバー -->
-                            <div class="flex gap-2 mt-2 text-sm">
-                                <span class="text-gray-500 self-center">特殊記号:</span>
-                                <button v-for="char in ['Ω', 'μ', 'φ', 'θ', 'π', '∠']" :key="char"
-                                    @click="insertChar(q, 'text', char)"
-                                    class="bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded px-2 py-1 min-w-[30px]">
-                                    {{ char }}
-                                </button>
+                            <div
+                                class="bg-gray-50 px-4 py-2 border-b border-gray-100 flex justify-between items-center cursor-move">
+                                <div class="flex items-center gap-3">
+                                    <i class="fa-solid fa-grip-vertical text-gray-400"></i>
+                                    <span class="font-bold text-gray-600">Q{{ index + 1 }}</span>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button @click="moveQuestion(index, -1)" :disabled="index === 0"
+                                        class="text-gray-400 hover:text-primary w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 transition disabled:opacity-30">
+                                        <i class="fa-solid fa-arrow-up"></i>
+                                    </button>
+                                    <button @click="moveQuestion(index, 1)" :disabled="index === questions.length - 1"
+                                        class="text-gray-400 hover:text-primary w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 transition disabled:opacity-30">
+                                        <i class="fa-solid fa-arrow-down"></i>
+                                    </button>
+                                    <div class="w-px bg-gray-300 mx-1 h-5 self-center"></div>
+                                    <button @click="removeQuestion(index)"
+                                        class="text-red-400 hover:text-red-600 w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-50 transition">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                </div>
                             </div>
-                        </div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">画像URL (任意)</label>
-                                <input type="text" v-model="q.imageUrl"
-                                    class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-primary outline-none">
-                            </div>
-                            <div v-if="q.imageUrl"
-                                class="mt-2 p-2 bg-gray-50 rounded border border-gray-200 inline-block w-full">
-                                <p class="text-xs text-gray-500 mb-1">プレビュー:</p>
-                                <img :src="processImageUrl(q.imageUrl)" alt="Preview"
-                                    class="h-32 object-contain rounded" referrerpolicy="no-referrer"
-                                    @error="handleImageError">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">配点</label>
-                                <input type="number" v-model.number="q.points"
-                                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-primary outline-none">
-                            </div>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">採点基準
-                                (AIへの指示プロンプト)</label>
-                            <textarea v-model="q.criteria" rows="2"
-                                class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary outline-none transition"
-                                placeholder="例: 「オームの法則」という言葉があれば正解とする。計算式が合っていれば部分点を与える。"></textarea>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">模範解答 (学生に表示)</label>
-                            <textarea v-model="q.modelAnswer" rows="2"
-                                class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-green-500 outline-none transition bg-green-50"
-                                placeholder="例: V = IR = 10 * 2 = 20[V]"></textarea>
-                        </div>
-                    </div>
-                    <div class="h-px bg-gray-200 my-4"></div>
-
-                    <!-- Sub-Questions Section -->
-                    <div>
-                        <div class="flex justify-between items-center mb-2">
-                            <label class="block text-sm font-medium text-gray-700">小問設定 (オプション)</label>
-                            <button @click="addSubQuestion(q)"
-                                class="text-xs text-primary hover:underline flex items-center gap-1">
-                                <i class="fa-solid fa-plus-circle"></i> 小問を追加
-                            </button>
-                        </div>
-
-                        <div v-if="q.subQuestions && q.subQuestions.length > 0"
-                            class="space-y-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
-                            <div v-for="(subQ, sIdx) in q.subQuestions" :key="subQ.id"
-                                class="bg-white p-3 rounded border border-gray-200 relative">
-                                <span
-                                    class="absolute -left-3 -top-3 bg-secondary text-white w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold border-2 border-white shadow-sm">
-                                    {{ numberedCircle(sIdx + 1) }}
-                                </span>
-                                <button @click="removeSubQuestion(q, sIdx)"
-                                    class="absolute top-2 right-2 text-gray-400 hover:text-red-500">
-                                    <i class="fa-solid fa-times"></i>
-                                </button>
-
-                                <div class="grid gap-3">
+                            <div class="p-5 space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">問題文</label>
+                                    <textarea v-model="q.text" rows="3" id="'q-text-' + index"
+                                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary outline-none transition"></textarea>
+                                    <!-- 記号入力ツールバー -->
+                                    <div class="flex gap-2 mt-2 text-sm">
+                                        <span class="text-gray-500 self-center">特殊記号:</span>
+                                        <button v-for="char in ['Ω', 'μ', 'φ', 'θ', 'π', '∠']" :key="char"
+                                            @click="insertChar(q, 'text', char)"
+                                            class="bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded px-2 py-1 min-w-[30px]">
+                                            {{ char }}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div>
-                                        <label class="text-xs font-bold text-gray-500">問題文</label>
-                                        <textarea v-model="subQ.text" rows="2"
-                                            class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary outline-none"></textarea>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">画像URL
+                                            (任意)</label>
+                                        <input type="text" v-model="q.imageUrl"
+                                            class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-primary outline-none">
                                     </div>
-                                    <div class="grid grid-cols-2 gap-3">
-                                        <div>
-                                            <label class="text-xs font-bold text-gray-500">配点</label>
-                                            <input type="number" v-model.number="subQ.points"
-                                                class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary outline-none">
+                                    <div v-if="q.imageUrl"
+                                        class="mt-2 p-2 bg-gray-50 rounded border border-gray-200 inline-block w-full">
+                                        <p class="text-xs text-gray-500 mb-1">プレビュー:</p>
+                                        <img :src="processImageUrl(q.imageUrl)" alt="Preview"
+                                            class="h-32 object-contain rounded" referrerpolicy="no-referrer"
+                                            @error="handleImageError">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">配点</label>
+                                        <input type="number" v-model.number="q.points"
+                                            class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-primary outline-none">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">採点基準
+                                        (AIへの指示プロンプト)</label>
+                                    <textarea v-model="q.criteria" rows="2"
+                                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary outline-none transition"
+                                        placeholder="例: 「オームの法則」という言葉があれば正解とする。計算式が合っていれば部分点を与える。"></textarea>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">模範解答 (学生に表示)</label>
+                                    <textarea v-model="q.modelAnswer" rows="2"
+                                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-green-500 outline-none transition bg-green-50"
+                                        placeholder="例: V = IR = 10 * 2 = 20[V]"></textarea>
+                                </div>
+                            </div>
+                            <div class="h-px bg-gray-200 my-4"></div>
+
+                            <!-- Sub-Questions Section -->
+                            <div>
+                                <div class="flex justify-between items-center mb-2">
+                                    <label class="block text-sm font-medium text-gray-700">小問設定 (オプション)</label>
+                                    <button @click="addSubQuestion(q)"
+                                        class="text-xs text-primary hover:underline flex items-center gap-1">
+                                        <i class="fa-solid fa-plus-circle"></i> 小問を追加
+                                    </button>
+                                </div>
+
+                                <div v-if="q.subQuestions && q.subQuestions.length > 0"
+                                    class="space-y-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                    <div v-for="(subQ, sIdx) in q.subQuestions" :key="subQ.id"
+                                        class="bg-white p-3 rounded border border-gray-200 relative">
+                                        <span
+                                            class="absolute -left-3 -top-3 bg-secondary text-white w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold border-2 border-white shadow-sm">
+                                            {{ numberedCircle(sIdx + 1) }}
+                                        </span>
+                                        <button @click="removeSubQuestion(q, sIdx)"
+                                            class="absolute top-2 right-2 text-gray-400 hover:text-red-500">
+                                            <i class="fa-solid fa-times"></i>
+                                        </button>
+
+                                        <div class="grid gap-3">
+                                            <div>
+                                                <label class="text-xs font-bold text-gray-500">問題文</label>
+                                                <textarea v-model="subQ.text" rows="2"
+                                                    class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary outline-none"></textarea>
+                                            </div>
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label class="text-xs font-bold text-gray-500">配点</label>
+                                                    <input type="number" v-model.number="subQ.points"
+                                                        class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary outline-none">
+                                                </div>
+                                                <div>
+                                                    <label class="text-xs font-bold text-gray-500">採点基準(AI)</label>
+                                                    <input type="text" v-model="subQ.criteria"
+                                                        class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary outline-none"
+                                                        placeholder="プロンプト...">
+                                                </div>
+                                                <div class="col-span-2">
+                                                    <label class="text-xs font-bold text-gray-500">模範解答(表示用)</label>
+                                                    <input type="text" v-model="subQ.modelAnswer"
+                                                        class="w-full px-2 py-1 text-sm border border-green-300 rounded focus:ring-1 focus:ring-green-500 outline-none bg-green-50"
+                                                        placeholder="正解...">
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <label class="text-xs font-bold text-gray-500">採点基準(AI)</label>
-                                            <input type="text" v-model="subQ.criteria"
-                                                class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary outline-none"
-                                                placeholder="プロンプト...">
+                                    </div>
+                                </div>
+                                <p v-else class="text-sm text-gray-400 italic">小問はありません。メインの配点と基準が適用されます。</p>
+                            </div>
+                        </div>
+                    </div>
+                    <button @click="addQuestion"
+                        class="w-full py-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-primary hover:text-primary hover:bg-blue-50 transition flex flex-col items-center justify-center gap-2">
+                        <i class="fa-solid fa-circle-plus text-2xl"></i>問題を追加
+                    </button>
+                    <div class="h-10"></div>
+                </div>
+
+                <div v-if="currentView === 'examinee'" class="space-y-6">
+                    <div v-if="testResult" class="space-y-6">
+                        <div class="bg-white rounded-xl shadow-lg border border-teal-100 p-8 text-center">
+                            <i class="fa-solid fa-trophy text-5xl text-yellow-400 mb-4"></i>
+                            <h2 class="text-2xl font-bold text-gray-800">試験終了</h2>
+                            <p class="text-gray-500 mt-2">お疲れ様でした。採点結果は以下の通りです。</p>
+                            <div class="mt-6 text-4xl font-black text-primary">
+                                {{ testResult.totalScore }} <span class="text-xl text-gray-400 font-normal">/ {{
+                                    totalMaxScore }} 点</span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-4">
+                            <h3 class="font-bold text-gray-700 text-lg">詳細フィードバック</h3>
+                            <div v-for="(res, idx) in testResult.results" :key="idx"
+                                class="bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
+
+                                <div class="flex justify-between items-start mb-4">
+                                    <div class="flex items-center gap-3">
+                                        <span class="font-bold text-gray-500">Q{{ idx + 1 }}</span>
+                                        <span
+                                            :class="['px-2 py-1 rounded text-xs font-bold border flex items-center gap-1', getResultStatus(res).class]">
+                                            <i :class="['fa-solid', getResultStatus(res).icon]"></i>
+                                            {{ getResultStatus(res).label }}
+                                        </span>
+                                        <span v-if="res.subQuestionId"
+                                            class="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
+                                            小問 {{ getSubQNumber(res) }}
+                                        </span>
+                                    </div>
+                                    <div class="text-xl font-bold"
+                                        :class="res.score > 0 ? 'text-primary' : 'text-gray-400'">
+                                        {{ res.score }} <span class="text-sm font-normal text-gray-500">点</span>
+                                    </div>
+                                </div>
+
+                                <div class="mb-4">
+                                    <p class="text-xs text-gray-400 font-bold mb-1">問題文</p>
+                                    <p class="text-gray-800 font-medium">{{ getQuestionText(res) }}</p>
+                                </div>
+
+                                <div class="mb-4">
+                                    <p class="text-xs text-gray-400 font-bold mb-1">あなたの回答</p>
+                                    <p
+                                        class="text-gray-700 p-3 bg-gray-50 rounded border border-gray-100 whitespace-pre-wrap">
+                                        {{ getUserAnswer(res) }}</p>
+                                </div>
+
+                                <div>
+                                    <p class="text-xs text-gray-400 font-bold mb-1">AI講評</p>
+                                    <div class="flex gap-3">
+                                        <i class="fa-solid fa-robot text-primary mt-1"></i>
+                                        <p class="text-gray-600 text-sm leading-relaxed"
+                                            style="font-family: 'Segoe UI Symbol', 'Noto Sans JP', sans-serif;">{{
+                                            res.reason }}</p>
+                                    </div>
+                                </div>
+
+                                <div v-if="getResultStatus(res).label !== '正解'"
+                                    class="mt-4 pt-4 border-t border-gray-100">
+                                    <p class="text-xs text-red-500 font-bold mb-1">模範解答</p>
+                                    <p class="text-gray-700 bg-red-50 p-3 rounded border border-red-100 whitespace-pre-wrap text-sm"
+                                        style="font-family: 'Segoe UI Symbol', 'Noto Sans JP', sans-serif;">{{
+                                        getModelAnswer(res) }}</p>
+                                </div>
+                            </div>
+                        </div>
+                        <button @click="resetTest"
+                            class="w-full bg-gray-600 text-white py-3 rounded-lg hover:bg-gray-700 transition">終了して戻る</button>
+                    </div>
+
+                    <div v-else class="space-y-6">
+                        <div v-if="questions.length === 0" class="text-center py-10 text-gray-500">
+                            <p>現在、問題が登録されていません。</p>
+                        </div>
+
+                        <div v-else>
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-sm font-medium text-gray-500">問題 {{ currentQuestionIndex + 1 }} /
+                                    {{
+                                    questions.length }}</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2.5 mb-6">
+                                <div class="bg-accent h-2.5 rounded-full transition-all duration-300"
+                                    :style="{ width: ((currentQuestionIndex + 1) / questions.length) * 100 + '%' }">
+                                </div>
+                            </div>
+
+                            <div v-if="currentQuestion"
+                                class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+                                <div class="p-6 md:p-8 space-y-6">
+                                    <h3 class="text-xl font-bold text-gray-800 leading-relaxed">{{
+                                        currentQuestion.text
+                                        }}</h3>
+
+                                    <div v-if="currentQuestion.imageUrl"
+                                        class="flex justify-center bg-gray-50 p-4 rounded-lg">
+                                        <img :src="processImageUrl(currentQuestion.imageUrl)"
+                                            class="max-h-64 object-contain rounded shadow-sm"
+                                            referrerpolicy="no-referrer" @error="handleImageError">
+                                    </div>
+
+                                    <div class="mt-6">
+                                        <div v-if="currentQuestion.subQuestions && currentQuestion.subQuestions.length > 0"
+                                            class="space-y-6">
+                                            <div v-for="(sq, sIdx) in currentQuestion.subQuestions" :key="sq.id"
+                                                class="space-y-2">
+                                                <div class="flex items-start gap-2">
+                                                    <span class="font-bold text-lg text-primary">{{
+                                                        numberedCircle(sIdx
+                                                        + 1)
+                                                        }}</span>
+                                                    <p class="font-bold text-gray-800 pt-1">{{ sq.text }}</p>
+                                                </div>
+                                                <textarea v-model="getAnswerRef(currentQuestion.id, sq.id).value"
+                                                    class="w-full h-24 px-4 py-3 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-accent outline-none transition resize-none"
+                                                    placeholder="回答を入力..."></textarea>
+                                            </div>
                                         </div>
-                                        <div class="col-span-2">
-                                            <label class="text-xs font-bold text-gray-500">模範解答(表示用)</label>
-                                            <input type="text" v-model="subQ.modelAnswer"
-                                                class="w-full px-2 py-1 text-sm border border-green-300 rounded focus:ring-1 focus:ring-green-500 outline-none bg-green-50"
-                                                placeholder="正解...">
+                                        <div v-else>
+                                            <label class="block text-sm font-semibold text-gray-700 mb-2">回答欄</label>
+                                            <textarea v-model="answers[currentQuestion.id]"
+                                                class="w-full h-48 px-4 py-3 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-accent outline-none transition resize-none"
+                                                placeholder="ここに記述してください..."></textarea>
                                         </div>
+                                    </div>
+                                </div>
+                                <div
+                                    class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-between items-center">
+                                    <button @click="prevQuestion" :disabled="currentQuestionIndex === 0"
+                                        class="px-5 py-2 rounded-lg text-gray-600 hover:bg-gray-200 disabled:text-gray-300">
+                                        前へ
+                                    </button>
+
+                                    <div class="flex items-center gap-3">
+                                        <button v-if="!isLastQuestion" @click="nextQuestion"
+                                            class="bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 px-6 py-2.5 rounded-lg shadow-sm font-medium transition">
+                                            次へ
+                                        </button>
+
+                                        <button v-else @click="submitTest"
+                                            class="bg-accent hover:bg-teal-700 text-white px-8 py-2.5 rounded-lg shadow-lg font-bold transition">
+                                            採点する
+                                        </button>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                        <p v-else class="text-sm text-gray-400 italic">小問はありません。メインの配点と基準が適用されます。</p>
                     </div>
                 </div>
-            </div>
-            <button @click="addQuestion"
-                class="w-full py-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-primary hover:text-primary hover:bg-blue-50 transition flex flex-col items-center justify-center gap-2">
-                <i class="fa-solid fa-circle-plus text-2xl"></i>問題を追加
-            </button>
-            <div class="h-10"></div>
-    </div>
-
-    <div v-else-if="currentView === 'examinee'" class="space-y-6">
-        <div v-if="testResult" class="space-y-6">
-            <div class="bg-white rounded-xl shadow-lg border border-teal-100 p-8 text-center">
-                <i class="fa-solid fa-trophy text-5xl text-yellow-400 mb-4"></i>
-                <h2 class="text-2xl font-bold text-gray-800">試験終了</h2>
-                <p class="text-gray-500 mt-2">お疲れ様でした。採点結果は以下の通りです。</p>
-                <div class="mt-6 text-4xl font-black text-primary">
-                    {{ testResult.totalScore }} <span class="text-xl text-gray-400 font-normal">/ {{
-                        totalMaxScore }} 点</span>
-                </div>
-            </div>
-
-            <div class="space-y-4">
-                <h3 class="font-bold text-gray-700 text-lg">詳細フィードバック</h3>
-                <div v-for="(res, idx) in testResult.results" :key="idx"
-                    class="bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
-
-                    <div class="flex justify-between items-start mb-4">
-                        <div class="flex items-center gap-3">
-                            <span class="font-bold text-gray-500">Q{{ idx + 1 }}</span>
-                            <span
-                                :class="['px-2 py-1 rounded text-xs font-bold border flex items-center gap-1', getResultStatus(res).class]">
-                                <i :class="['fa-solid', getResultStatus(res).icon]"></i>
-                                {{ getResultStatus(res).label }}
-                            </span>
-                            <span v-if="res.subQuestionId" class="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
-                                小問 {{ getSubQNumber(res) }}
-                            </span>
-                        </div>
-                        <div class="text-xl font-bold" :class="res.score > 0 ? 'text-primary' : 'text-gray-400'">
-                            {{ res.score }} <span class="text-sm font-normal text-gray-500">点</span>
-                        </div>
-                    </div>
-
-                    <div class="mb-4">
-                        <p class="text-xs text-gray-400 font-bold mb-1">問題文</p>
-                        <p class="text-gray-800 font-medium">{{ getQuestionText(res) }}</p>
-                    </div>
-
-                    <div class="mb-4">
-                        <p class="text-xs text-gray-400 font-bold mb-1">あなたの回答</p>
-                        <p class="text-gray-700 p-3 bg-gray-50 rounded border border-gray-100 whitespace-pre-wrap">
-                            {{ getUserAnswer(res) }}</p>
-                    </div>
-
-                    <div>
-                        <p class="text-xs text-gray-400 font-bold mb-1">AI講評</p>
-                        <div class="flex gap-3">
-                            <i class="fa-solid fa-robot text-primary mt-1"></i>
-                            <p class="text-gray-600 text-sm leading-relaxed"
-                                style="font-family: 'Segoe UI Symbol', 'Noto Sans JP', sans-serif;">{{
-                                res.reason }}</p>
-                        </div>
-                    </div>
-
-                    <div v-if="getResultStatus(res).label !== '正解'" class="mt-4 pt-4 border-t border-gray-100">
-                        <p class="text-xs text-red-500 font-bold mb-1">模範解答</p>
-                        <p class="text-gray-700 bg-red-50 p-3 rounded border border-red-100 whitespace-pre-wrap text-sm"
-                            style="font-family: 'Segoe UI Symbol', 'Noto Sans JP', sans-serif;">{{
-                            getModelAnswer(res) }}</p>
-                    </div>
-                </div>
-            </div>
-            <button @click="resetTest"
-                class="w-full bg-gray-600 text-white py-3 rounded-lg hover:bg-gray-700 transition">終了して戻る</button>
-        </div>
-
-        <div v-else class="space-y-6">
-            <div v-if="questions.length === 0" class="text-center py-10 text-gray-500">
-                <p>現在、問題が登録されていません。</p>
-            </div>
-
-            <div v-else>
-                <div class="flex items-center justify-between mb-2">
-                    <span class="text-sm font-medium text-gray-500">問題 {{ currentQuestionIndex + 1 }} / {{
-                        questions.length }}</span>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-2.5 mb-6">
-                    <div class="bg-accent h-2.5 rounded-full transition-all duration-300"
-                        :style="{ width: ((currentQuestionIndex + 1) / questions.length) * 100 + '%' }">
-                    </div>
-                </div>
-
-                <div v-if="currentQuestion"
-                    class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
-                    <div class="p-6 md:p-8 space-y-6">
-                        <h3 class="text-xl font-bold text-gray-800 leading-relaxed">{{ currentQuestion.text
-                            }}</h3>
-
-                        <div v-if="currentQuestion.imageUrl" class="flex justify-center bg-gray-50 p-4 rounded-lg">
-                            <img :src="processImageUrl(currentQuestion.imageUrl)"
-                                class="max-h-64 object-contain rounded shadow-sm" referrerpolicy="no-referrer"
-                                @error="handleImageError">
-                        </div>
-
-                        <div class="mt-6">
-                            <div v-if="currentQuestion.subQuestions && currentQuestion.subQuestions.length > 0"
-                                class="space-y-6">
-                                <div v-for="(sq, sIdx) in currentQuestion.subQuestions" :key="sq.id" class="space-y-2">
-                                    <div class="flex items-start gap-2">
-                                        <span class="font-bold text-lg text-primary">{{ numberedCircle(sIdx
-                                            + 1)
-                                            }}</span>
-                                        <p class="font-bold text-gray-800 pt-1">{{ sq.text }}</p>
-                                    </div>
-                                    <textarea v-model="getAnswerRef(currentQuestion.id, sq.id).value"
-                                        class="w-full h-24 px-4 py-3 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-accent outline-none transition resize-none"
-                                        placeholder="回答を入力..."></textarea>
-                                </div>
-                            </div>
-                            <div v-else>
-                                <label class="block text-sm font-semibold text-gray-700 mb-2">回答欄</label>
-                                <textarea v-model="answers[currentQuestion.id]"
-                                    class="w-full h-48 px-4 py-3 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-accent outline-none transition resize-none"
-                                    placeholder="ここに記述してください..."></textarea>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-between items-center">
-                        <button @click="prevQuestion" :disabled="currentQuestionIndex === 0"
-                            class="px-5 py-2 rounded-lg text-gray-600 hover:bg-gray-200 disabled:text-gray-300">
-                            前へ
-                        </button>
-
-                        <div class="flex items-center gap-3">
-                            <button v-if="!isLastQuestion" @click="nextQuestion"
-                                class="bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 px-6 py-2.5 rounded-lg shadow-sm font-medium transition">
-                                次へ
-                            </button>
-
-                            <button v-else @click="submitTest"
-                                class="bg-accent hover:bg-teal-700 text-white px-8 py-2.5 rounded-lg shadow-lg font-bold transition">
-                                採点する
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    </div>
-    </main>
-    <!-- Password Modal -->
-    <div v-if="showPasswordModal"
-        class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm p-4 animate-fade-in"
-        v-cloak>
-        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all scale-100">
+        </main>
+        <!-- Password Modal -->
+        <div v-if="showPasswordModal"
+            class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm p-4 animate-fade-in"
+            v-cloak>
             <div
-                class="bg-primary px-6 py-4 flex justify-between items-center bg-gradient-to-r from-blue-600 to-blue-500">
-                <h3 class="text-lg font-bold text-white flex items-center gap-2"><i class="fa-solid fa-lock"></i>
-                    管理者認証
-                </h3>
-                <button @click="showPasswordModal = false; inputPassword = ''; authError = '';"
-                    class="text-white/80 hover:text-white transition">
-                    <i class="fa-solid fa-times text-lg"></i>
-                </button>
-            </div>
-            <div class="p-8 space-y-6">
-                <p class="text-gray-600 text-sm">管理画面に進むにはパスワードを入力してください。</p>
-                <div class="space-y-2">
-                    <input type="password" v-model="inputPassword" @keyup.enter="checkPassword" placeholder="パスワードを入力"
-                        autofocus
-                        class="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:border-primary focus:ring-4 focus:ring-blue-50 outline-none transition text-lg tracking-widest placeholder-gray-400">
-                    <p v-if="authError" class="text-red-500 text-xs font-bold flex items-center gap-1 animate-pulse">
-                        <i class="fa-solid fa-circle-exclamation"></i>{{ authError }}
-                    </p>
-                </div>
-                <div class="flex justify-end gap-3 pt-2">
+                class="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all scale-100">
+                <div
+                    class="bg-primary px-6 py-4 flex justify-between items-center bg-gradient-to-r from-blue-600 to-blue-500">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2"><i class="fa-solid fa-lock"></i>
+                        管理者認証
+                    </h3>
                     <button @click="showPasswordModal = false; inputPassword = ''; authError = '';"
-                        class="px-5 py-2.5 text-gray-500 hover:bg-gray-100 rounded-lg transition font-medium text-sm">キャンセル</button>
-                    <button @click="checkPassword"
-                        class="px-6 py-2.5 bg-primary hover:bg-blue-600 text-white font-bold rounded-lg shadow-md hover:shadow-lg transition text-sm flex items-center gap-2">
-                        <i class="fa-solid fa-arrow-right-to-bracket"></i> ログイン
+                        class="text-white/80 hover:text-white transition">
+                        <i class="fa-solid fa-times text-lg"></i>
                     </button>
                 </div>
+                <div class="p-8 space-y-6">
+                    <p class="text-gray-600 text-sm">管理画面に進むにはパスワードを入力してください。</p>
+                    <div class="space-y-2">
+                        <input type="password" v-model="inputPassword" @keyup.enter="checkPassword"
+                            placeholder="パスワードを入力" autofocus
+                            class="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:border-primary focus:ring-4 focus:ring-blue-50 outline-none transition text-lg tracking-widest placeholder-gray-400">
+                        <p v-if="authError"
+                            class="text-red-500 text-xs font-bold flex items-center gap-1 animate-pulse">
+                            <i class="fa-solid fa-circle-exclamation"></i>{{ authError }}
+                        </p>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2">
+                        <button @click="showPasswordModal = false; inputPassword = ''; authError = '';"
+                            class="px-5 py-2.5 text-gray-500 hover:bg-gray-100 rounded-lg transition font-medium text-sm">キャンセル</button>
+                        <button @click="checkPassword"
+                            class="px-6 py-2.5 bg-primary hover:bg-blue-600 text-white font-bold rounded-lg shadow-md hover:shadow-lg transition text-sm flex items-center gap-2">
+                            <i class="fa-solid fa-arrow-right-to-bracket"></i> ログイン
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
-    </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.min.js" crossorigin></script>
