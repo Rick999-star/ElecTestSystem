@@ -8,6 +8,7 @@ const SCRIPT_PROP_KEY_SHEET_ID = 'SHEET_ID';
 const SCRIPT_PROP_KEY_GEMINI_API_KEY = 'GEMINI_API_KEY';
 const SHEET_NAME_QUESTIONS = 'Questions';
 const SHEET_NAME_RESPONSES = 'Responses';
+const SHEET_NAME_PATTERNS = 'Patterns';
 
 /**
  * Webアプリへのアクセス時にHTMLを返す
@@ -62,10 +63,136 @@ function saveQuestions(questions) {
             sheet.getRange(2, 1, rows.length, 7).setValues(rows);
         }
 
+        // Force commit to ensure data is written
+        SpreadsheetApp.flush();
         return { success: true, message: '問題を保存しました。' };
     } catch (e) {
         console.error(e);
         return { success: false, message: '保存エラー: ' + e.toString() };
+    }
+}
+
+/**
+ * パターンの保存
+ * @param {string} title - パターン名
+ * @param {Array} questions - 問題リスト
+ */
+function savePattern(title, questions) {
+    try {
+        if (!title) throw new Error('タイトルが空です。');
+
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+        let sheet = ss.getSheetByName(SHEET_NAME_PATTERNS);
+        if (!sheet) {
+            sheet = ss.insertSheet(SHEET_NAME_PATTERNS);
+            sheet.appendRow(['Title', 'QuestionsJSON', 'UpdatedAt']); // Header
+        }
+
+        const data = sheet.getDataRange().getValues();
+        let rowIndex = -1;
+
+        // 既存タイトルの検索 (2行目以降)
+        for (let i = 1; i < data.length; i++) {
+            if (String(data[i][0]) === String(title)) {
+                rowIndex = i + 1; // 1-based index
+                break;
+            }
+        }
+
+        const jsonStr = JSON.stringify(questions);
+        const timestamp = new Date();
+
+        if (rowIndex > 0) {
+            // 上書き
+            sheet.getRange(rowIndex, 2).setValue(jsonStr);
+            sheet.getRange(rowIndex, 3).setValue(timestamp);
+            SpreadsheetApp.flush();
+            return { success: true, message: `パターン「${title}」を更新しました。` };
+        } else {
+            // 新規追加
+            sheet.appendRow([title, jsonStr, timestamp]);
+            SpreadsheetApp.flush();
+            return { success: true, message: `パターン「${title}」を保存しました。` };
+        }
+
+    } catch (e) {
+        console.error(e);
+        return { success: false, message: '保存エラー: ' + e.toString() };
+    }
+}
+
+/**
+ * 保存済みパターンのリスト取得
+ */
+function getPatternList() {
+    try {
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+        const sheet = ss.getSheetByName(SHEET_NAME_PATTERNS);
+        if (!sheet) return [];
+
+        const lastRow = sheet.getLastRow();
+        if (lastRow < 2) return [];
+
+        // Title列(A列)とUpdatedAt列(C列)のみ取得
+        const data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+        return data.map(row => ({
+            title: String(row[0]),
+            updatedAt: row[2] ? new Date(row[2]).toISOString() : ''
+        }));
+    } catch (e) {
+        console.error('getPatternList Error:', e);
+        return [];
+    }
+}
+
+/**
+ * 特定パターンの読み込み
+ */
+function getPattern(title) {
+    try {
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+        const sheet = ss.getSheetByName(SHEET_NAME_PATTERNS);
+        if (!sheet) throw new Error('Pattern sheet not found');
+
+        const data = sheet.getDataRange().getValues();
+        // 2行目以降を検索
+        for (let i = 1; i < data.length; i++) {
+            if (String(data[i][0]) === String(title)) {
+                const jsonStr = data[i][1];
+                const questions = JSON.parse(jsonStr);
+                return { success: true, questions: questions };
+            }
+        }
+        return { success: false, message: 'パターンが見つかりませんでした。' };
+    } catch (e) {
+        console.error(e);
+        return { success: false, message: '読み込みエラー: ' + e.toString() };
+    }
+}
+
+/**
+ * パターンの削除
+ */
+function deletePattern(title) {
+    try {
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+        const sheet = ss.getSheetByName(SHEET_NAME_PATTERNS);
+        if (!sheet) throw new Error('Pattern sheet not found');
+
+        const data = sheet.getDataRange().getValues();
+        for (let i = 1; i < data.length; i++) {
+            if (String(data[i][0]) === String(title)) {
+                sheet.deleteRow(i + 1);
+                return { success: true };
+            }
+        }
+        return { success: false, message: 'パターンが見つかりませんでした。' };
+    } catch (e) {
+        return { success: false, message: '削除エラー: ' + e.toString() };
     }
 }
 

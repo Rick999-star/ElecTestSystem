@@ -132,6 +132,49 @@
 
                 <div v-if="currentView === 'admin'" class="space-y-6">
                     <div
+                        class="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-gray-100 mb-6">
+                        <div>
+                            <h2 class="text-lg font-semibold text-gray-800">問題パターン管理</h2>
+                            <p class="text-sm text-gray-500">作成した問題をパターンとして保存・呼び出しできます</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <div class="flex flex-col">
+                                <label class="text-xs text-gray-500 mb-1">パターン保存</label>
+                                <div class="flex gap-2">
+                                    <input type="text" v-model="patternTitle" placeholder="パターン名 (例: 2024前期)"
+                                        class="px-3 py-1.5 border border-gray-300 rounded text-sm w-48 focus:ring-1 focus:ring-primary outline-none">
+                                    <button @click="savePattern" :disabled="!patternTitle"
+                                        class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-sm font-medium transition disabled:bg-gray-300">
+                                        <i class="fa-solid fa-save"></i> 保存
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="w-px h-10 bg-gray-200 mx-2"></div>
+                            <div class="flex flex-col">
+                                <label class="text-xs text-gray-500 mb-1">パターン読出</label>
+                                <div class="flex gap-2">
+                                    <select v-model="selectedPatternTitle"
+                                        class="px-3 py-1.5 border border-gray-300 rounded text-sm w-48 focus:ring-1 focus:ring-primary outline-none">
+                                        <option value="" disabled>選択してください</option>
+                                        <option v-for="p in savedPatterns" :key="p.title" :value="p.title">
+                                            {{ p.title }} ({{ formatDate(p.updatedAt) }})
+                                        </option>
+                                    </select>
+                                    <button @click="loadPattern" :disabled="!selectedPatternTitle"
+                                        class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm font-medium transition disabled:bg-gray-300">
+                                        <i class="fa-solid fa-folder-open"></i> 読込
+                                    </button>
+                                    <button @click="deletePattern" :disabled="!selectedPatternTitle"
+                                        class="bg-gray-100 hover:bg-red-100 text-gray-500 hover:text-red-500 px-2 py-1.5 rounded text-sm font-medium transition disabled:text-gray-300"
+                                        title="削除">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
                         class="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-gray-100">
                         <div>
                             <h2 class="text-lg font-semibold text-gray-800">問題作成</h2>
@@ -437,382 +480,505 @@
         </main>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.min.js" crossorigin></script>
     <script>
         const { createApp, ref, computed, onMounted } = Vue;
 
-        createApp({
-            setup() {
-                const currentView = ref('admin');
-                const isLoading = ref(false);
-                const loadingMessage = ref('');
-                const questions = ref([]);
-                const currentQuestionIndex = ref(0);
-                const answers = ref({});
-                const testResult = ref(null);
+        if (typeof createApp !== 'function') {
+            throw new Error('Vue.js check failed: createApp is not a function.');
+        }
 
-                const isGasEnv = typeof google !== 'undefined' && google.script;
+        try {
+            const app = createApp({
+                setup() {
+                    const currentView = ref('admin');
+                    const isLoading = ref(false);
+                    const loadingMessage = ref('');
+                    const questions = ref([]);
+                    const currentQuestionIndex = ref(0);
+                    const answers = ref({});
+                    const testResult = ref(null);
+                    const patternTitle = ref('');
+                    const selectedPatternTitle = ref('');
+                    const savedPatterns = ref([]);
 
-                const runGas = (funcName, ...args) => {
-                    return new Promise((resolve, reject) => {
-                        // タイムアウト設定 (300秒 = 5分)
-                        const timeoutId = setTimeout(() => {
-                            reject(new Error('Timeout: サーバーからの応答がありません。300秒以上経過しました。'));
-                        }, 300000);
+                    const isGasEnv = typeof google !== 'undefined' && google.script;
 
-                        if (!isGasEnv) {
-                            clearTimeout(timeoutId);
-                            if (funcName === 'saveQuestions') return setTimeout(() => resolve({ success: true }), 500);
-                            if (funcName === 'testGeminiConnection') return setTimeout(() => resolve({ success: true, message: '(Mock) Connection OK' }), 500);
-                            if (funcName === 'testGrading') return setTimeout(() => resolve({ success: true, message: '(Mock) Grading OK', details: [] }), 1000);
-                            if (funcName === 'getQuestions') return setTimeout(() => resolve([
-                                { id: '1', text: '(Local) Normal Question', points: 10 },
-                                {
-                                    id: '2', text: '(Local) Parent Question', points: 0, subQuestions: [
-                                        { id: 'sq1', text: 'Sub Q1', points: 5, criteria: '' },
-                                        { id: 'sq2', text: 'Sub Q2', points: 5, criteria: '' }
+                    const runGas = (funcName, ...args) => {
+                        return new Promise((resolve, reject) => {
+                            // タイムアウト設定 (300秒 = 5分)
+                            const timeoutId = setTimeout(() => {
+                                reject(new Error('Timeout: サーバーからの応答がありません。300秒以上経過しました。'));
+                            }, 300000);
+
+                            if (!isGasEnv) {
+                                clearTimeout(timeoutId);
+                                if (funcName === 'saveQuestions') return setTimeout(() => resolve({ success: true }), 500);
+                                // Mock for patterns
+                                if (funcName === 'savePattern') return setTimeout(() => {
+                                    console.log('Mock Save Pattern:', args);
+                                    return resolve({ success: true, message: 'Mock Saved' });
+                                }, 500);
+                                if (funcName === 'getPatternList') return setTimeout(() => resolve([
+                                    { title: 'Mock Pattern A', updatedAt: new Date() },
+                                    { title: 'Mock Pattern B', updatedAt: new Date(Date.now() - 86400000) }
+                                ]), 500);
+                                if (funcName === 'getPattern') return setTimeout(() => resolve({
+                                    success: true,
+                                    questions: [
+                                        { id: 'p1', text: '(Pattern) Loaded Question', points: 10 }
                                     ]
+                                }), 500);
+                                if (funcName === 'deletePattern') return setTimeout(() => resolve({ success: true }), 500);
+
+                                if (funcName === 'testGeminiConnection') return setTimeout(() => resolve({ success: true, message: '(Mock) Connection OK' }), 500);
+                                if (funcName === 'testGrading') return setTimeout(() => resolve({ success: true, message: '(Mock) Grading OK', details: [] }), 1000);
+                                if (funcName === 'getQuestions') return setTimeout(() => resolve([
+                                    { id: '1', text: '(Local) Normal Question', points: 10 },
+                                    {
+                                        id: '2', text: '(Local) Parent Question', points: 0, subQuestions: [
+                                            { id: 'sq1', text: 'Sub Q1', points: 5, criteria: '' },
+                                            { id: 'sq2', text: 'Sub Q2', points: 5, criteria: '' }
+                                        ]
+                                    }
+                                ]), 500);
+                                if (funcName === 'submitAnswers') return setTimeout(() => resolve({
+                                    success: true,
+                                    totalScore: 15,
+                                    results: [
+                                        { score: 10, reason: '(Local) Good', questionId: '1' },
+                                        { score: 3, reason: '(Local) OK', questionId: '2', subQuestionId: 'sq1' },
+                                        { score: 2, reason: '(Local) Weak', questionId: '2', subQuestionId: 'sq2' }
+                                    ]
+                                }), 1500);
+                                return resolve();
+                            }
+                            google.script.run
+                                .withSuccessHandler(res => {
+                                    clearTimeout(timeoutId);
+                                    resolve(res);
+                                })
+                                .withFailureHandler(err => {
+                                    clearTimeout(timeoutId);
+                                    reject(err);
+                                })
+                            [funcName](...args);
+                        });
+                    };
+
+                    const checkConnection = async () => {
+                        isLoading.value = true;
+                        loadingMessage.value = 'Connecting to Gemini...';
+                        try {
+                            const res = await runGas('testGeminiConnection');
+                            alert(res.success ? '成功: ' + res.message : '失敗: ' + res.message);
+                        } catch (e) {
+                            alert('通信エラー: ' + e);
+                        } finally {
+                            isLoading.value = false;
+                        }
+                    };
+
+                    const checkGrading = async () => {
+                        isLoading.value = true;
+                        loadingMessage.value = 'Testing grading logic...';
+                        try {
+                            const res = await runGas('testGrading');
+                            if (res.success) {
+                                console.log(res.details);
+                                alert('成功: ' + res.message + '\n詳細はコンソールを確認してください');
+                            } else {
+                                alert('失敗: ' + res.message);
+                            }
+                        } catch (e) {
+                            alert('通信エラー: ' + e);
+                        } finally {
+                            isLoading.value = false;
+                        }
+                    };
+
+                    const processImageUrl = (url) => {
+                        if (!url) return '';
+                        let match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                        if (!match) match = url.match(/id=([a-zA-Z0-9_-]+)/);
+                        if (match && match[1]) {
+                            return 'https://drive.google.com/uc?export=view&id=' + match[1];
+                        }
+                        return url;
+                    };
+
+                    const handleImageError = (e) => {
+                        console.error('Image load failed');
+                    };
+
+                    // 記号挿入ヘルパー - SubQuestion対応のために汎用化が必要だが、一旦簡易対応
+                    const insertChar = (obj, field, char) => {
+                        if (!obj[field]) obj[field] = '';
+                        obj[field] += char;
+                    };
+
+                    // 丸数字変換
+                    const numberedCircle = (num) => {
+                        const chars = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+                        return chars[num - 1] || `(${num})`;
+                    };
+
+                    const getSubQNumber = (res) => {
+                        // 結果表示用ヘルパー
+                        // 元の質問を探してインデックスを特定するのは高コストなので、APIが返すべきだが
+                        // ここでは簡易的に実装できないため、IDマッチングを試みる
+                        // ※本来はAPIレスポンスにindexを含めると楽
+                        const q = questions.value.find(q => q.id === res.questionId);
+                        if (!q || !q.subQuestions) return '?';
+                        const idx = q.subQuestions.findIndex(sq => sq.id === res.subQuestionId);
+                        return numberedCircle(idx + 1);
+                    };
+
+                    // 入れ子回答へのバインディング用
+                    const getAnswerRef = (qId, subId) => {
+                        if (!answers.value[qId]) answers.value[qId] = {};
+                        if (typeof answers.value[qId] !== 'object') answers.value[qId] = {}; // 既存データ保護
+
+                        // refを返さないとv-modelが効かないため、computedプロパティ的なオブジェクトを返す
+                        // Vue3のReactive Mapハック
+                        return {
+                            get value() { return answers.value[qId][subId] || ''; },
+                            set value(v) { answers.value[qId][subId] = v; }
+                        }
+                    };
+
+                    const loadQuestions = async () => {
+                        isLoading.value = true;
+                        loadingMessage.value = 'Loading questions...';
+                        try {
+                            const data = await runGas('getQuestions');
+                            questions.value = data || [];
+                            if (currentView.value === 'admin' && questions.value.length === 0) {
+                                addQuestion();
+                            }
+                        } catch (e) {
+                            alert('Error: ' + e);
+                        } finally {
+                            isLoading.value = false;
+                        }
+                    };
+
+                    const switchView = async (view) => {
+                        currentView.value = view;
+                        testResult.value = null;
+                        answers.value = {};
+                        currentQuestionIndex.value = 0;
+                        if (view === 'examinee' || view === 'admin') {
+                            await loadQuestions();
+                        }
+                    };
+
+                    const addQuestion = () => {
+                        questions.value.push({
+                            id: Date.now().toString(),
+                            text: '',
+                            imageUrl: '',
+                            points: 10,
+                            criteria: '',
+                            modelAnswer: ''
+                        });
+                    };
+
+                    const removeQuestion = (index) => {
+                        questions.value.splice(index, 1);
+                    };
+
+                    const addSubQuestion = (q) => {
+                        if (!q.subQuestions) q.subQuestions = [];
+                        q.subQuestions.push({
+                            id: 'sq-' + Date.now() + Math.random().toString(36).substr(2, 5),
+                            text: '',
+                            points: 5,
+                            criteria: '',
+                            modelAnswer: ''
+                        });
+                    };
+
+                    const removeSubQuestion = (q, index) => {
+                        q.subQuestions.splice(index, 1);
+                    };
+
+                    const moveQuestion = (index, direction) => {
+                        const newIndex = index + direction;
+                        if (newIndex >= 0 && newIndex < questions.value.length) {
+                            const item = questions.value.splice(index, 1)[0];
+                            questions.value.splice(newIndex, 0, item);
+                        }
+                    };
+
+                    const finalizeQuestions = async () => {
+                        if (!confirm('Save questions?')) return;
+                        isLoading.value = true;
+                        loadingMessage.value = 'Saving...';
+                        try {
+                            const res = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value)));
+                            if (res.success) {
+                                alert('Saved!');
+                            } else {
+                                alert('Save failed: ' + res.message);
+                            }
+                        } catch (e) {
+                            alert('Error: ' + e);
+                        } finally {
+                            isLoading.value = false;
+                        }
+                    };
+
+                    // --- Pattern Management ---
+                    const formatDate = (dateStr) => {
+                        if (!dateStr) return '';
+                        const d = new Date(dateStr);
+                        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+                    };
+
+                    const loadPatternList = async () => {
+                        try {
+                            const list = await runGas('getPatternList');
+                            savedPatterns.value = list;
+                        } catch (e) {
+                            console.error('Failed to load patterns', e);
+                        }
+                    };
+
+                    const savePattern = async () => {
+                        if (!patternTitle.value) return;
+                        if (!confirm(`パターン「${patternTitle.value}」として保存しますか？`)) return;
+
+                        isLoading.value = true;
+                        loadingMessage.value = 'Saving Pattern...';
+                        try {
+                            const res = await runGas('savePattern', patternTitle.value, JSON.parse(JSON.stringify(questions.value)));
+                            if (res.success) {
+                                alert(res.message);
+                                await loadPatternList(); // リスト更新
+                                selectedPatternTitle.value = patternTitle.value; // 保存したものを選択状態に
+                            } else {
+                                alert('失敗: ' + res.message);
+                            }
+                        } catch (e) {
+                            alert('Error: ' + e);
+                        } finally {
+                            isLoading.value = false;
+                        }
+                    };
+
+                    const loadPattern = async () => {
+                        if (!selectedPatternTitle.value) return;
+                        if (!confirm(`パターン「${selectedPatternTitle.value}」を読み込みますか？\n編集中の内容は失われます。`)) return;
+
+                        isLoading.value = true;
+                        loadingMessage.value = 'Loading Pattern...';
+                        try {
+                            const res = await runGas('getPattern', selectedPatternTitle.value);
+                            if (res.success) {
+                                questions.value = res.questions;
+                                patternTitle.value = selectedPatternTitle.value; // タイトル入力欄にも反映
+
+                                // Auto-publish to "Questions" sheet
+                                loadingMessage.value = 'Syncing to Examinee View...';
+                                const saveRes = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value)));
+                                if (saveRes.success) {
+                                    alert(`パターン「${selectedPatternTitle.value}」を読み込み、受験者画面に反映しました。`);
+                                } else {
+                                    alert('読み込みは成功しましたが、反映に失敗しました: ' + saveRes.message);
                                 }
-                            ]), 500);
-                            if (funcName === 'submitAnswers') return setTimeout(() => resolve({
-                                success: true,
-                                totalScore: 15,
-                                results: [
-                                    { score: 10, reason: '(Local) Good', questionId: '1' },
-                                    { score: 3, reason: '(Local) OK', questionId: '2', subQuestionId: 'sq1' },
-                                    { score: 2, reason: '(Local) Weak', questionId: '2', subQuestionId: 'sq2' }
-                                ]
-                            }), 1500);
-                            return resolve();
+                            } else {
+                                alert('失敗: ' + res.message);
+                            }
+                        } catch (e) {
+                            alert('Error: ' + e);
+                        } finally {
+                            isLoading.value = false;
                         }
-                        google.script.run
-                            .withSuccessHandler(res => {
-                                clearTimeout(timeoutId);
-                                resolve(res);
-                            })
-                            .withFailureHandler(err => {
-                                clearTimeout(timeoutId);
-                                reject(err);
-                            })
-                        [funcName](...args);
+                    };
+
+                    const deletePattern = async () => {
+                        if (!selectedPatternTitle.value) return;
+                        if (!confirm(`本当に「${selectedPatternTitle.value}」を削除しますか？`)) return;
+
+                        isLoading.value = true;
+                        try {
+                            const res = await runGas('deletePattern', selectedPatternTitle.value);
+                            if (res.success) {
+                                alert('削除しました。');
+                                selectedPatternTitle.value = '';
+                                await loadPatternList();
+                            } else {
+                                alert('失敗: ' + res.message);
+                            }
+                        } catch (e) {
+                            alert('Error: ' + e);
+                        } finally {
+                            isLoading.value = false;
+                        }
+                    };
+
+                    const currentQuestion = computed(() => questions.value[currentQuestionIndex.value]);
+                    const isLastQuestion = computed(() => currentQuestionIndex.value === questions.value.length - 1);
+
+                    const nextQuestion = () => { if (!isLastQuestion.value) currentQuestionIndex.value++; };
+                    const prevQuestion = () => { if (currentQuestionIndex.value > 0) currentQuestionIndex.value--; };
+
+                    const submitTest = async () => {
+                        if (!confirm('採点を開始して試験を終了しますか？\n（未回答の問題があっても採点されます）')) return;
+                        isLoading.value = true;
+                        loadingMessage.value = 'Grading...';
+
+                        try {
+                            const res = await runGas('submitAnswers', JSON.parse(JSON.stringify(answers.value)));
+
+                            if (res.success) {
+                                testResult.value = res;
+                            } else {
+                                alert('Submit failed: ' + res.message);
+                            }
+                        } catch (e) {
+                            alert('Error: ' + e);
+                        } finally {
+                            isLoading.value = false;
+                        }
+                    };
+
+                    const resetTest = () => {
+                        testResult.value = null;
+                        answers.value = {};
+                        currentQuestionIndex.value = 0;
+                    };
+
+                    onMounted(() => {
+                        if (questions.value.length === 0) addQuestion();
+                        if (currentView.value === 'admin') loadPatternList();
                     });
-                };
 
-                const checkConnection = async () => {
-                    isLoading.value = true;
-                    loadingMessage.value = 'Connecting to Gemini...';
-                    try {
-                        const res = await runGas('testGeminiConnection');
-                        alert(res.success ? '成功: ' + res.message : '失敗: ' + res.message);
-                    } catch (e) {
-                        alert('通信エラー: ' + e);
-                    } finally {
-                        isLoading.value = false;
-                    }
-                };
+                    const dragIndex = ref(null);
+                    const dragTargetIndex = ref(null);
 
-                const checkGrading = async () => {
-                    isLoading.value = true;
-                    loadingMessage.value = 'Testing grading logic...';
-                    try {
-                        const res = await runGas('testGrading');
-                        if (res.success) {
-                            console.log(res.details);
-                            alert('成功: ' + res.message + '\n詳細はコンソールを確認してください');
-                        } else {
-                            alert('失敗: ' + res.message);
+                    const handleDragStart = (e, index) => {
+                        dragIndex.value = index;
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.dropEffect = 'move';
+                        // ドラッグ中の要素を少し透明にするなどのスタイル適用はCSSクラスで行う
+                    };
+
+                    const handleDragEnter = (e, index) => {
+                        if (index !== dragIndex.value) {
+                            dragTargetIndex.value = index;
                         }
-                    } catch (e) {
-                        alert('通信エラー: ' + e);
-                    } finally {
-                        isLoading.value = false;
-                    }
-                };
+                    };
 
-                const processImageUrl = (url) => {
-                    if (!url) return '';
-                    let match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
-                    if (!match) match = url.match(/id=([a-zA-Z0-9_-]+)/);
-                    if (match && match[1]) {
-                        return 'https://drive.google.com/uc?export=view&id=' + match[1];
-                    }
-                    return url;
-                };
+                    const handleDragOver = (e) => {
+                        e.preventDefault(); // ドロップを許可するために必須
+                        e.dataTransfer.dropEffect = 'move';
+                    };
 
-                const handleImageError = (e) => {
-                    console.error('Image load failed');
-                };
+                    const handleDrop = (index) => {
+                        const fromIndex = dragIndex.value;
+                        const toIndex = index;
 
-                // 記号挿入ヘルパー - SubQuestion対応のために汎用化が必要だが、一旦簡易対応
-                const insertChar = (obj, field, char) => {
-                    if (!obj[field]) obj[field] = '';
-                    obj[field] += char;
-                };
-
-                // 丸数字変換
-                const numberedCircle = (num) => {
-                    const chars = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
-                    return chars[num - 1] || `(${num})`;
-                };
-
-                const getSubQNumber = (res) => {
-                    // 結果表示用ヘルパー
-                    // 元の質問を探してインデックスを特定するのは高コストなので、APIが返すべきだが
-                    // ここでは簡易的に実装できないため、IDマッチングを試みる
-                    // ※本来はAPIレスポンスにindexを含めると楽
-                    const q = questions.value.find(q => q.id === res.questionId);
-                    if (!q || !q.subQuestions) return '?';
-                    const idx = q.subQuestions.findIndex(sq => sq.id === res.subQuestionId);
-                    return numberedCircle(idx + 1);
-                };
-
-                // 入れ子回答へのバインディング用
-                const getAnswerRef = (qId, subId) => {
-                    if (!answers.value[qId]) answers.value[qId] = {};
-                    if (typeof answers.value[qId] !== 'object') answers.value[qId] = {}; // 既存データ保護
-
-                    // refを返さないとv-modelが効かないため、computedプロパティ的なオブジェクトを返す
-                    // Vue3のReactive Mapハック
-                    return {
-                        get value() { return answers.value[qId][subId] || ''; },
-                        set value(v) { answers.value[qId][subId] = v; }
-                    }
-                };
-
-                const loadQuestions = async () => {
-                    isLoading.value = true;
-                    loadingMessage.value = 'Loading questions...';
-                    try {
-                        const data = await runGas('getQuestions');
-                        questions.value = data || [];
-                        if (currentView.value === 'admin' && questions.value.length === 0) {
-                            addQuestion();
+                        if (fromIndex === null || fromIndex === toIndex) {
+                            dragIndex.value = null;
+                            dragTargetIndex.value = null;
+                            return;
                         }
-                    } catch (e) {
-                        alert('Error: ' + e);
-                    } finally {
-                        isLoading.value = false;
-                    }
-                };
 
-                const switchView = async (view) => {
-                    currentView.value = view;
-                    testResult.value = null;
-                    answers.value = {};
-                    currentQuestionIndex.value = 0;
-                    if (view === 'examinee' || view === 'admin') {
-                        await loadQuestions();
-                    }
-                };
+                        // 配列の並び替え
+                        const item = questions.value.splice(fromIndex, 1)[0];
+                        questions.value.splice(toIndex, 0, item);
 
-                const addQuestion = () => {
-                    questions.value.push({
-                        id: Date.now().toString(),
-                        text: '',
-                        imageUrl: '',
-                        points: 10,
-                        criteria: '',
-                        modelAnswer: ''
-                    });
-                };
-
-                const removeQuestion = (index) => {
-                    questions.value.splice(index, 1);
-                };
-
-                const addSubQuestion = (q) => {
-                    if (!q.subQuestions) q.subQuestions = [];
-                    q.subQuestions.push({
-                        id: 'sq-' + Date.now() + Math.random().toString(36).substr(2, 5),
-                        text: '',
-                        points: 5,
-                        criteria: '',
-                        modelAnswer: ''
-                    });
-                };
-
-                const removeSubQuestion = (q, index) => {
-                    q.subQuestions.splice(index, 1);
-                };
-
-                const moveQuestion = (index, direction) => {
-                    const newIndex = index + direction;
-                    if (newIndex >= 0 && newIndex < questions.value.length) {
-                        const item = questions.value.splice(index, 1)[0];
-                        questions.value.splice(newIndex, 0, item);
-                    }
-                };
-
-                const finalizeQuestions = async () => {
-                    if (!confirm('Save questions?')) return;
-                    isLoading.value = true;
-                    loadingMessage.value = 'Saving...';
-                    try {
-                        const res = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value)));
-                        if (res.success) {
-                            alert('Saved!');
-                        } else {
-                            alert('Save failed: ' + res.message);
-                        }
-                    } catch (e) {
-                        alert('Error: ' + e);
-                    } finally {
-                        isLoading.value = false;
-                    }
-                };
-
-                const currentQuestion = computed(() => questions.value[currentQuestionIndex.value]);
-                const isLastQuestion = computed(() => currentQuestionIndex.value === questions.value.length - 1);
-
-                const nextQuestion = () => { if (!isLastQuestion.value) currentQuestionIndex.value++; };
-                const prevQuestion = () => { if (currentQuestionIndex.value > 0) currentQuestionIndex.value--; };
-
-                const submitTest = async () => {
-                    if (!confirm('採点を開始して試験を終了しますか？\n（未回答の問題があっても採点されます）')) return;
-                    isLoading.value = true;
-                    loadingMessage.value = 'Grading...';
-
-                    try {
-                        const res = await runGas('submitAnswers', JSON.parse(JSON.stringify(answers.value)));
-
-                        if (res.success) {
-                            testResult.value = res;
-                        } else {
-                            alert('Submit failed: ' + res.message);
-                        }
-                    } catch (e) {
-                        alert('Error: ' + e);
-                    } finally {
-                        isLoading.value = false;
-                    }
-                };
-
-                const resetTest = () => {
-                    testResult.value = null;
-                    answers.value = {};
-                    currentQuestionIndex.value = 0;
-                };
-
-                onMounted(() => {
-                    if (questions.value.length === 0) addQuestion();
-                });
-
-                const dragIndex = ref(null);
-                const dragTargetIndex = ref(null);
-
-                const handleDragStart = (e, index) => {
-                    dragIndex.value = index;
-                    e.dataTransfer.effectAllowed = 'move';
-                    e.dataTransfer.dropEffect = 'move';
-                    // ドラッグ中の要素を少し透明にするなどのスタイル適用はCSSクラスで行う
-                };
-
-                const handleDragEnter = (e, index) => {
-                    if (index !== dragIndex.value) {
-                        dragTargetIndex.value = index;
-                    }
-                };
-
-                const handleDragOver = (e) => {
-                    e.preventDefault(); // ドロップを許可するために必須
-                    e.dataTransfer.dropEffect = 'move';
-                };
-
-                const handleDrop = (index) => {
-                    const fromIndex = dragIndex.value;
-                    const toIndex = index;
-
-                    if (fromIndex === null || fromIndex === toIndex) {
                         dragIndex.value = null;
                         dragTargetIndex.value = null;
-                        return;
-                    }
+                    };
 
-                    // 配列の並び替え
-                    const item = questions.value.splice(fromIndex, 1)[0];
-                    questions.value.splice(toIndex, 0, item);
+                    const totalMaxScore = computed(() => {
+                        return questions.value.reduce((sum, q) => {
+                            if (q.subQuestions && q.subQuestions.length > 0) {
+                                return sum + q.subQuestions.reduce((s, sq) => s + (Number(sq.points) || 0), 0);
+                            }
+                            return sum + (Number(q.points) || 0);
+                        }, 0);
+                    });
 
-                    dragIndex.value = null;
-                    dragTargetIndex.value = null;
-                };
-
-                const totalMaxScore = computed(() => {
-                    return questions.value.reduce((sum, q) => {
-                        if (q.subQuestions && q.subQuestions.length > 0) {
-                            return sum + q.subQuestions.reduce((s, sq) => s + (Number(sq.points) || 0), 0);
+                    const getQuestionText = (res) => {
+                        const q = questions.value.find(q => q.id === res.questionId);
+                        if (!q) return '(不明な問題)';
+                        if (res.subQuestionId && q.subQuestions) {
+                            const sq = q.subQuestions.find(sq => sq.id === res.subQuestionId);
+                            return sq ? sq.text : '(不明な小問)';
                         }
-                        return sum + (Number(q.points) || 0);
-                    }, 0);
-                });
+                        return q.text;
+                    };
 
-                const getQuestionText = (res) => {
-                    const q = questions.value.find(q => q.id === res.questionId);
-                    if (!q) return '(不明な問題)';
-                    if (res.subQuestionId && q.subQuestions) {
-                        const sq = q.subQuestions.find(sq => sq.id === res.subQuestionId);
-                        return sq ? sq.text : '(不明な小問)';
+                    const getUserAnswer = (res) => {
+                        const ans = answers.value[res.questionId];
+                        if (!ans) return '(無回答)';
+                        if (res.subQuestionId) {
+                            return (typeof ans === 'object' && ans[res.subQuestionId]) ? ans[res.subQuestionId] : '(無回答)';
+                        }
+                        return (typeof ans === 'string') ? ans : '(形式エラー)';
+                    };
+
+                    const getResultStatus = (res) => {
+                        const q = questions.value.find(q => q.id === res.questionId);
+                        if (!q) return { label: '-', class: 'text-gray-400', icon: 'fa-minus' };
+
+                        let maxPoints = q.points;
+                        if (res.subQuestionId && q.subQuestions) {
+                            const sq = q.subQuestions.find(sq => sq.id === res.subQuestionId);
+                            if (sq) maxPoints = sq.points;
+                        }
+
+                        if (res.score >= maxPoints) return { label: '正解', class: 'text-green-600 bg-green-50 border-green-200', icon: 'fa-circle-check' };
+                        if (res.score <= 0) return { label: '不正解', class: 'text-red-600 bg-red-50 border-red-200', icon: 'fa-circle-xmark' };
+                        return { label: '部分点', class: 'text-yellow-600 bg-yellow-50 border-yellow-200', icon: 'fa-circle-exclamation' };
+                    };
+
+                    const getCriteria = (res) => { // これはAIプロンプト（デバッグ用か、非表示にする）
+                        const q = questions.value.find(q => q.id === res.questionId);
+                        if (!q) return '';
+                        if (res.subQuestionId && q.subQuestions) {
+                            const sq = q.subQuestions.find(sq => sq.id === res.subQuestionId);
+                            return sq ? sq.criteria : '';
+                        }
+                        return q.criteria;
+                    };
+
+                    const getModelAnswer = (res) => {
+                        const q = questions.value.find(q => q.id === res.questionId);
+                        if (!q) return '';
+                        let target = q;
+                        if (res.subQuestionId && q.subQuestions) {
+                            const sq = q.subQuestions.find(sq => sq.id === res.subQuestionId);
+                            if (sq) target = sq;
+                        }
+                        // criteriaへのフォールバックを削除し、安全なデフォルトメッセージを表示
+                        return target.modelAnswer || '（模範解答設定なし）';
+                    };
+
+                    return {
+                        currentView, isLoading, loadingMessage, questions, currentQuestionIndex,
+                        answers, testResult, currentQuestion, isLastQuestion, totalMaxScore,
+                        switchView, addQuestion, removeQuestion, moveQuestion, finalizeQuestions,
+                        nextQuestion, prevQuestion, submitTest, resetTest, checkConnection, checkGrading,
+                        processImageUrl, handleImageError, insertChar,
+                        handleDragStart, handleDragEnter, handleDragOver, handleDrop, dragIndex, dragTargetIndex,
+                        addSubQuestion, removeSubQuestion, numberedCircle, getSubQNumber, getAnswerRef,
+                        getQuestionText, getUserAnswer, getResultStatus, getCriteria, getModelAnswer,
+                        // Pattern Management
+                        patternTitle, selectedPatternTitle, savedPatterns, formatDate,
+                        savePattern, loadPattern, deletePattern
                     }
-                    return q.text;
-                };
-
-                const getUserAnswer = (res) => {
-                    const ans = answers.value[res.questionId];
-                    if (!ans) return '(無回答)';
-                    if (res.subQuestionId) {
-                        return (typeof ans === 'object' && ans[res.subQuestionId]) ? ans[res.subQuestionId] : '(無回答)';
-                    }
-                    return (typeof ans === 'string') ? ans : '(形式エラー)';
-                };
-
-                const getResultStatus = (res) => {
-                    const q = questions.value.find(q => q.id === res.questionId);
-                    if (!q) return { label: '-', class: 'text-gray-400', icon: 'fa-minus' };
-
-                    let maxPoints = q.points;
-                    if (res.subQuestionId && q.subQuestions) {
-                        const sq = q.subQuestions.find(sq => sq.id === res.subQuestionId);
-                        if (sq) maxPoints = sq.points;
-                    }
-
-                    if (res.score >= maxPoints) return { label: '正解', class: 'text-green-600 bg-green-50 border-green-200', icon: 'fa-circle-check' };
-                    if (res.score <= 0) return { label: '不正解', class: 'text-red-600 bg-red-50 border-red-200', icon: 'fa-circle-xmark' };
-                    return { label: '部分点', class: 'text-yellow-600 bg-yellow-50 border-yellow-200', icon: 'fa-circle-exclamation' };
-                };
-
-                const getCriteria = (res) => { // これはAIプロンプト（デバッグ用か、非表示にする）
-                    const q = questions.value.find(q => q.id === res.questionId);
-                    if (!q) return '';
-                    if (res.subQuestionId && q.subQuestions) {
-                        const sq = q.subQuestions.find(sq => sq.id === res.subQuestionId);
-                        return sq ? sq.criteria : '';
-                    }
-                    return q.criteria;
-                };
-
-                const getModelAnswer = (res) => {
-                    const q = questions.value.find(q => q.id === res.questionId);
-                    if (!q) return '';
-                    let target = q;
-                    if (res.subQuestionId && q.subQuestions) {
-                        const sq = q.subQuestions.find(sq => sq.id === res.subQuestionId);
-                        if (sq) target = sq;
-                    }
-                    // criteriaへのフォールバックを削除し、安全なデフォルトメッセージを表示
-                    return target.modelAnswer || '（模範解答設定なし）';
-                };
-
-                return {
-                    currentView, isLoading, loadingMessage, questions, currentQuestionIndex,
-                    answers, testResult, currentQuestion, isLastQuestion, totalMaxScore,
-                    switchView, addQuestion, removeQuestion, moveQuestion, finalizeQuestions,
-                    nextQuestion, prevQuestion, submitTest, resetTest, checkConnection, checkGrading,
-                    processImageUrl, handleImageError, insertChar,
-                    handleDragStart, handleDragEnter, handleDragOver, handleDrop, dragIndex, dragTargetIndex,
-                    addSubQuestion, removeSubQuestion, numberedCircle, getSubQNumber, getAnswerRef,
-                    getQuestionText, getUserAnswer, getResultStatus, getCriteria, getModelAnswer
                 }
-            }
-        }).mount('#app');
+            }).mount('#app');
+        } catch (e) {
+            console.error('App Init Error:', e);
+            document.getElementById('error-display').style.display = 'block';
+            document.getElementById('error-display').innerHTML = '<strong>App Init Error:</strong> ' + e.toString();
+        }
     </script>
 </body>
 
