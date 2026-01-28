@@ -184,6 +184,11 @@
                             <p class="text-sm text-gray-500">作成した問題をパターンとして保存・呼び出しできます</p>
                         </div>
                         <div class="flex items-center gap-3">
+                            <button @click="createNewPattern"
+                                class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-sm font-medium transition border border-gray-300 flex items-center gap-1">
+                                <i class="fa-solid fa-file-circle-plus"></i> 新規作成
+                            </button>
+                            <div class="w-px h-10 bg-gray-200 mx-1"></div>
                             <div class="flex flex-col">
                                 <label class="text-xs text-gray-500 mb-1">パターン保存</label>
                                 <div class="flex gap-2">
@@ -1031,6 +1036,17 @@
                         dragTargetIndex.value = null;
                     };
 
+                    const createNewPattern = () => {
+                        if (questions.value.length > 0) {
+                            if (!confirm('現在の編集内容は失われます。新規作成しますか？')) return;
+                        }
+                        questions.value = [];
+                        addQuestion(); // Start with one empty question
+                        patternTitle.value = '';
+                        selectedPatternTitle.value = '';
+                        // Do not clear currentDeployedPattern as we usually want to know what is live
+                    };
+
                     const totalMaxScore = computed(() => {
                         return questions.value.reduce((sum, q) => {
                             if (q.subQuestions && q.subQuestions.length > 0) {
@@ -1108,7 +1124,7 @@
                         getQuestionText, getUserAnswer, getResultStatus, getCriteria, getModelAnswer,
                         // Pattern Management
                         patternTitle, selectedPatternTitle, savedPatterns, formatDate,
-                        savePattern, loadPattern, deletePattern, currentDeployedPattern
+                        savePattern, loadPattern, deletePattern, currentDeployedPattern, createNewPattern
                     }
                 }
             }).mount('#app');
