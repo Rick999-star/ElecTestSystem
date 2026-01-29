@@ -445,6 +445,8 @@ function _gradeWithGemini(questions, answers) {
                     type: 'sub',
                     qId: q.id,
                     sqId: sq.id,
+                    // ユニークIDを生成 (例: "Q1_sub1")。記号は避けたほうが無難だがアンダースコアはOK
+                    tempId: `${q.id}_${sq.id}`,
                     text: `[親問題]: ${q.text}\n[小問題]: ${sq.text}`,
                     points: sq.points,
                     criteria: sq.criteria || '特になし',
@@ -456,6 +458,7 @@ function _gradeWithGemini(questions, answers) {
                 type: 'normal',
                 qId: q.id,
                 sqId: null,
+                tempId: String(q.id),
                 text: q.text,
                 points: q.points,
                 criteria: q.criteria || '特になし',
@@ -466,28 +469,34 @@ function _gradeWithGemini(questions, answers) {
 
     if (problemList.length === 0) return [];
 
-    // 並列処理のためにリクエストを作成
-    const CHUNK_SIZE = 4; // チャンクサイズを縮小 (安定性重視)
+    // チャンク分割
+    const CHUNK_SIZE = 3;
     const chunks = [];
     for (let i = 0; i < problemList.length; i += CHUNK_SIZE) {
         chunks.push(problemList.slice(i, i + CHUNK_SIZE));
     }
 
-    // Gemini API エンドポイント (Gemini 3.0 Flash Preview)
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+    // Gemini API エンドポイント
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
-    const requests = chunks.map((chunk, i) => {
+    let allResults = [];
+    console.log(`Starting serial grading for ${chunks.length} chunks (ID-based matching)...`);
+
+    // 直列実行ループ
+    for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+
+        // プロンプト作成
         let promptText = `
 あなたは電気工学の専門家かつ厳格な採点者です。以下の試験問題に対する学生の回答を一括で採点してください。
 
 【採点対象リスト】
 `;
-        chunk.forEach((p, index) => {
+        chunk.forEach((p) => {
             const ans = typeof p.studentAnswer === 'string' ? p.studentAnswer : JSON.stringify(p.studentAnswer);
             promptText += `
 ---
-No.${index + 1}
-[問題ID: ${p.qId}${p.sqId ? '_' + p.sqId : ''}]
+[ID: ${p.tempId}]
 問題文: ${p.text}
 配点: ${p.points}点
 採点基準: ${p.criteria}
@@ -500,113 +509,125 @@ No.${index + 1}
 
 【採点フォーマット（厳守）】
 以下のJSON配列形式のみを出力してください。Markdownのコードブロックは不要です。
-必ず "No.1" から "No.${chunk.length}" までの全ての採点結果を含めてください。
+リスト内の各オブジェクトには、必ず入力と同じ "id" を含めてください。
 
 [
-  { "index": 0, "score": 数値, "reason": "短いフィードバック" },
-  { "index": 1, "score": 数値, "reason": "短いフィードバック" },
+  { "id": "ID文字列", "score": 数値, "reason": "短いフィードバック" },
+  { "id": "ID文字列", "score": 数値, "reason": "短いフィードバック" },
   ...
 ]
 
-※ indexは0始まり(No.1に対応)で、入力リストの順序と一致させてください。
+※ "id" は上記リストの [ID: ...] と完全に一致させてください。
 ※ 未回答の場合は0点としてください。
 ※ 理由(reason)は学生への直接的なフィードバックとして適切かつ簡潔な日本語で記述してください。
 `;
 
-        return {
-            url: url,
+        const payload = JSON.stringify({
+            contents: [{ parts: [{ text: promptText }] }],
+            generationConfig: { response_mime_type: "application/json" }
+        });
+
+        const options = {
             method: 'post',
             contentType: 'application/json',
-            payload: JSON.stringify({
-                contents: [{ parts: [{ text: promptText }] }],
-                generationConfig: { response_mime_type: "application/json" }
-            }),
+            payload: payload,
             muteHttpExceptions: true
         };
-    });
 
-    // 並列実行
-    let responses = [];
-    try {
-        console.log(`Starting parallel grading for ${chunks.length} chunks...`);
-        responses = UrlFetchApp.fetchAll(requests);
-    } catch (e) {
-        console.error("UrlFetchApp.fetchAll failed completely:", e);
-        // 全体が失敗した場合のフォールバック
-        return problemList.map(p => ({
-            questionId: p.qId,
-            subQuestionId: p.sqId,
-            score: 0,
-            reason: "通信エラーが発生しました: " + e.message
-        }));
-    }
-
-    let allResults = [];
-
-    // レスポンス処理
-    responses.forEach((response, i) => {
-        const chunk = chunks[i];
-        const responseCode = response.getResponseCode();
-        const responseText = response.getContentText();
-
-        let chunkResults = [];
+        // リトライロジック
         let success = false;
+        let chunkResults = [];
+        const MAX_RETRIES = 3;
 
-        if (responseCode === 200) {
-            try {
-                const data = JSON.parse(responseText);
-                if (data.candidates && data.candidates.length > 0) {
-                    const text = data.candidates[0].content.parts[0].text;
-                    const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-                    // パース試行
-                    let parsedData;
-                    try {
-                        parsedData = JSON.parse(jsonStr);
-                    } catch (e) {
-                        const match = jsonStr.match(/\[[\s\S]*\]/) || jsonStr.match(/\{[\s\S]*\}/);
-                        if (match) parsedData = JSON.parse(match[0].replace(/\\/g, '\\\\'));
-                    }
-
-                    if (Array.isArray(parsedData)) {
-                        chunkResults = parsedData;
-                        success = true;
-                    } else if (parsedData) {
-                        chunkResults = [parsedData];
-                        success = true;
-                    }
-                }
-            } catch (e) {
-                console.error(`Chunk ${i} parse error:`, e);
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            if (attempt > 0) {
+                console.log(`Retry attempt ${attempt} for chunk ${i}...`);
+                Utilities.sleep(1000 * Math.pow(2, attempt));
             }
-        } else {
-            console.warn(`Chunk ${i} failed with status ${responseCode}: ${responseText}`);
+
+            try {
+                const response = UrlFetchApp.fetch(url, options);
+                const responseCode = response.getResponseCode();
+                const responseText = response.getContentText();
+
+                if (responseCode === 200) {
+                    try {
+                        const data = JSON.parse(responseText);
+                        if (data.candidates && data.candidates.length > 0) {
+                            const text = data.candidates[0].content.parts[0].text;
+                            const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
+                            let parsedData;
+                            try {
+                                parsedData = JSON.parse(jsonStr);
+                            } catch (e) {
+                                const match = jsonStr.match(/\[[\s\S]*\]/);
+                                if (match) parsedData = JSON.parse(match[0].replace(/\\/g, '\\\\'));
+                            }
+
+                            if (Array.isArray(parsedData)) {
+                                chunkResults = parsedData;
+                                success = true;
+                                break;
+                            } else if (parsedData) {
+                                chunkResults = [parsedData];
+                                success = true;
+                                break;
+                            }
+                        }
+                    } catch (parseError) {
+                        console.error(`Chunk ${i} parse error (Attempt ${attempt}):`, parseError);
+                    }
+                } else if (responseCode === 429 || responseCode === 503 || responseCode >= 500) {
+                    console.warn(`Chunk ${i} failed with status ${responseCode}. Retrying...`);
+                    continue;
+                } else {
+                    console.error(`Chunk ${i} fatal error: ${responseCode} - ${responseText}`);
+                    break;
+                }
+            } catch (fetchError) {
+                console.error(`Chunk ${i} fetch error (Attempt ${attempt}):`, fetchError);
+            }
         }
 
         if (success) {
-            const mapped = chunkResults.map(r => {
-                const idx = r.index;
-                if (typeof idx !== 'number' || idx < 0 || idx >= chunk.length) return null;
-                const original = chunk[idx];
-                return {
-                    questionId: original.qId,
-                    subQuestionId: original.sqId,
-                    score: Number(r.score) || 0,
-                    reason: r.reason || ''
-                };
-            }).filter(Boolean);
+            // IDベースでマッピング
+            const mapped = chunk.map(original => {
+                // レスポンスから該当IDを探す
+                const match = chunkResults.find(r => String(r.id) === String(original.tempId));
+                if (match) {
+                    return {
+                        questionId: original.qId,
+                        subQuestionId: original.sqId,
+                        score: Number(match.score) || 0,
+                        reason: match.reason || ''
+                    };
+                } else {
+                    console.warn(`Missing result for ID: ${original.tempId}`);
+                    return {
+                        questionId: original.qId,
+                        subQuestionId: original.sqId,
+                        score: 0,
+                        reason: "採点エラー (結果が見つかりませんでした)"
+                    };
+                }
+            });
             allResults = allResults.concat(mapped);
         } else {
-            // 失敗したチャンクは0点埋め (再試行ロジックを入れるならここだが、fetchAllだと個別リトライは複雑なので一旦エラー扱い)
-            // 時間があれば、失敗したリクエストだけ抽出して _callGeminiApi（同期）でリトライする実装も可
+            // 失敗時は0点
             const fallback = chunk.map(p => ({
                 questionId: p.qId,
                 subQuestionId: p.sqId,
                 score: 0,
-                reason: `採点エラー (Status: ${responseCode})`
+                reason: `採点エラー (処理失敗)`
             }));
             allResults = allResults.concat(fallback);
         }
-    });
+
+        if (i < chunks.length - 1) {
+            Utilities.sleep(1000);
+        }
+    }
 
     return allResults;
 }
