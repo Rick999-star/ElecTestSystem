@@ -10,6 +10,22 @@ const SHEET_NAME_QUESTIONS = 'Questions';
 const SHEET_NAME_RESPONSES = 'Responses';
 const SHEET_NAME_PATTERNS = 'Patterns';
 const SHEET_NAME_SCORE_TABLE = '点数表';
+const SHEET_NAME_DEBUG_LOG = 'DebugLog';
+
+function _log(message) {
+    try {
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+        let sheet = ss.getSheetByName(SHEET_NAME_DEBUG_LOG);
+        if (!sheet) {
+            sheet = ss.insertSheet(SHEET_NAME_DEBUG_LOG);
+            sheet.appendRow(['Timestamp', 'Message']);
+        }
+        sheet.appendRow([new Date(), message]);
+    } catch (e) {
+        console.error("Log failed", e);
+    }
+}
 
 /**
  * Webアプリへのアクセス時にHTMLを返す
@@ -348,28 +364,42 @@ function saveTemporaryAnswers(answers, sessionId) {
  * @param {string} sessionId - セッションID (registerCandidateで取得)
  */
 function submitAnswers(answers, sessionId) {
+    _log(`submitAnswers started (Session: ${sessionId})`);
     try {
-        const questions = getQuestions();
+        const allQuestions = getQuestions();
+        _log(`Loaded ${allQuestions.length} questions.`);
+
+        // 【デバッグ用】 処理を5問だけに制限 -> 戻すことも可能だが一旦安全のため維持
+        const questions = allQuestions; // 全件処理
+        _log(`Processing all ${questions.length} questions.`);
 
         // 1. Gemini APIによる採点 (各問題ごと)
+        _log("Calling _gradeWithGemini...");
         const gradingResults = _gradeWithGemini(questions, answers);
+        _log(`_gradeWithGemini returned ${gradingResults.length} results.`);
+
         const totalScore = gradingResults.reduce((sum, r) => sum + r.score, 0);
+        _log(`Total Score calculated: ${totalScore}`);
 
         // 2. 点数表の更新 (sessionIdがある場合)
         if (sessionId) {
             _updateScoreTable(sessionId, totalScore);
+            _log("Score table updated.");
         }
 
         // 3. 詳細ログをスプレッドシートに保存 (バックアップ/詳細分析用)
         _saveResponseLog(questions, answers, gradingResults, totalScore, sessionId);
+        _log("Response log saved. Returning success.");
 
-        return {
+        // GASの通信トラブル回避のため、JSON文字列として返す
+        return JSON.stringify({
             success: true,
             totalScore: totalScore,
             results: gradingResults
-        };
+        });
 
     } catch (e) {
+        _log(`submitAnswers FATAL ERROR: ${e.toString()}`);
         console.error(e);
         const errorMsg = e.toString();
         // ユーザーにわかりやすいエラーメッセージを返す
@@ -411,7 +441,7 @@ function _updateScoreTable(sessionId, score) {
  * Gemini APIと通信して採点を行う内部関数 (一括採点版)
  */
 /**
- * Gemini APIと通信して採点を行う内部関数 (並列処理版)
+ * Gemini APIと通信して採点を行う内部関数 (一括採点・点数のみ版)
  */
 function _gradeWithGemini(questions, answers) {
     const apiKey = PropertiesService.getScriptProperties().getProperty(SCRIPT_PROP_KEY_GEMINI_API_KEY);
@@ -445,12 +475,11 @@ function _gradeWithGemini(questions, answers) {
                     type: 'sub',
                     qId: q.id,
                     sqId: sq.id,
-                    // ユニークIDを生成 (例: "Q1_sub1")。記号は避けたほうが無難だがアンダースコアはOK
                     tempId: `${q.id}_${sq.id}`,
                     text: `[親問題]: ${q.text}\n[小問題]: ${sq.text}`,
                     points: sq.points,
                     criteria: sq.criteria || '特になし',
-                    studentAnswer: (answers[q.id] && answers[q.id][sq.id]) || ""
+                    studentAnswer: (answers && answers[q.id] && answers[q.id][sq.id]) ? answers[q.id][sq.id] : ""
                 });
             });
         } else {
@@ -462,7 +491,7 @@ function _gradeWithGemini(questions, answers) {
                 text: q.text,
                 points: q.points,
                 criteria: q.criteria || '特になし',
-                studentAnswer: answers[q.id] || ""
+                studentAnswer: (answers && answers[q.id]) ? answers[q.id] : ""
             });
         }
     });
@@ -470,25 +499,27 @@ function _gradeWithGemini(questions, answers) {
     if (problemList.length === 0) return [];
 
     // チャンク分割
-    const CHUNK_SIZE = 3;
+    // 解説を生成しないため、トークン消費が少ない。1回に10問程度まとめて送る。
+    const CHUNK_SIZE = 10;
     const chunks = [];
     for (let i = 0; i < problemList.length; i += CHUNK_SIZE) {
         chunks.push(problemList.slice(i, i + CHUNK_SIZE));
     }
 
-    // Gemini API エンドポイント
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
-    let allResults = [];
-    console.log(`Starting serial grading for ${chunks.length} chunks (ID-based matching)...`);
+    console.log(`Starting Parallel Grading for ${chunks.length} chunks (fetchAll)...`);
+    _log(`_gradeWithGemini: Prepared ${chunks.length} chunks. Creating requests...`);
 
-    // 直列実行ループ
-    for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-
-        // プロンプト作成
+    // リクエストの構築
+    const requests = chunks.map((chunk, i) => {
         let promptText = `
-あなたは電気工学の専門家かつ厳格な採点者です。以下の試験問題に対する学生の回答を一括で採点してください。
+你是電気工学の専門家かつ厳格な採点者です。以下の試験問題に対する学生の回答を一括で採点してください。
+
+【重要：出力ルール】
+- **点数のみ**を判定してください。
+- 解説や理由は**一切不要**です。
+- 出力はJSON配列のみとしてください。
 
 【採点対象リスト】
 `;
@@ -507,19 +538,14 @@ function _gradeWithGemini(questions, answers) {
         promptText += `
 ---
 
-【採点フォーマット（厳守）】
-以下のJSON配列形式のみを出力してください。Markdownのコードブロックは不要です。
-リスト内の各オブジェクトには、必ず入力と同じ "id" を含めてください。
-
+【JSON出力フォーマット】
 [
-  { "id": "ID文字列", "score": 数値, "reason": "短いフィードバック" },
-  { "id": "ID文字列", "score": 数値, "reason": "短いフィードバック" },
+  { "id": "ID文字列", "score": 数値 },
+  { "id": "ID文字列", "score": 数値 },
   ...
 ]
-
 ※ "id" は上記リストの [ID: ...] と完全に一致させてください。
 ※ 未回答の場合は0点としてください。
-※ 理由(reason)は学生への直接的なフィードバックとして適切かつ簡潔な日本語で記述してください。
 `;
 
         const payload = JSON.stringify({
@@ -527,107 +553,108 @@ function _gradeWithGemini(questions, answers) {
             generationConfig: { response_mime_type: "application/json" }
         });
 
-        const options = {
+        return {
+            url: url,
             method: 'post',
             contentType: 'application/json',
             payload: payload,
             muteHttpExceptions: true
         };
+    });
 
-        // リトライロジック
-        let success = false;
+    let allResults = [];
+    let responses = [];
+
+    // 並列リクエスト実行
+    try {
+        _log("Executing UrlFetchApp.fetchAll...");
+        responses = UrlFetchApp.fetchAll(requests);
+        _log(`fetchAll completed. Received ${responses.length} responses.`);
+    } catch (e) {
+        _log(`fetchAll EXCEPTION: ${e.toString()}`);
+        console.error("fetchAll failed:", e);
+        // 全失敗として扱う
+        return problemList.map(p => ({
+            questionId: p.qId,
+            subQuestionId: p.sqId,
+            score: 0,
+            reason: `判定エラー (通信一括失敗: ${e.message})`
+        }));
+    }
+
+    // レスポンス処理
+    responses.forEach((response, i) => {
+        const chunk = chunks[i];
+        const responseCode = response.getResponseCode();
+        const responseText = response.getContentText();
         let chunkResults = [];
-        const MAX_RETRIES = 3;
+        let success = false;
 
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            if (attempt > 0) {
-                console.log(`Retry attempt ${attempt} for chunk ${i}...`);
-                Utilities.sleep(1000 * Math.pow(2, attempt));
-            }
-
+        if (responseCode === 200) {
             try {
-                const response = UrlFetchApp.fetch(url, options);
-                const responseCode = response.getResponseCode();
-                const responseText = response.getContentText();
+                const data = JSON.parse(responseText);
+                if (data.candidates && data.candidates.length > 0) {
+                    const text = data.candidates[0].content.parts[0].text;
+                    const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
 
-                if (responseCode === 200) {
+                    let parsedData;
                     try {
-                        const data = JSON.parse(responseText);
-                        if (data.candidates && data.candidates.length > 0) {
-                            const text = data.candidates[0].content.parts[0].text;
-                            const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-
-                            let parsedData;
-                            try {
-                                parsedData = JSON.parse(jsonStr);
-                            } catch (e) {
-                                const match = jsonStr.match(/\[[\s\S]*\]/);
-                                if (match) parsedData = JSON.parse(match[0].replace(/\\/g, '\\\\'));
-                            }
-
-                            if (Array.isArray(parsedData)) {
-                                chunkResults = parsedData;
-                                success = true;
-                                break;
-                            } else if (parsedData) {
-                                chunkResults = [parsedData];
-                                success = true;
-                                break;
-                            }
-                        }
-                    } catch (parseError) {
-                        console.error(`Chunk ${i} parse error (Attempt ${attempt}):`, parseError);
+                        parsedData = JSON.parse(jsonStr);
+                    } catch (e) {
+                        const match = jsonStr.match(/\[[\s\S]*\]/);
+                        if (match) parsedData = JSON.parse(match[0].replace(/\\/g, '\\\\'));
                     }
-                } else if (responseCode === 429 || responseCode === 503 || responseCode >= 500) {
-                    console.warn(`Chunk ${i} failed with status ${responseCode}. Retrying...`);
-                    continue;
-                } else {
-                    console.error(`Chunk ${i} fatal error: ${responseCode} - ${responseText}`);
-                    break;
+
+                    if (Array.isArray(parsedData)) {
+                        chunkResults = parsedData;
+                        success = true;
+                    } else if (parsedData) {
+                        chunkResults = [parsedData];
+                        success = true;
+                    }
                 }
-            } catch (fetchError) {
-                console.error(`Chunk ${i} fetch error (Attempt ${attempt}):`, fetchError);
+            } catch (parseError) {
+                console.error(`Chunk ${i} parse error:`, parseError);
             }
+        } else {
+            console.error(`Chunk ${i} error: ${responseCode} - ${responseText}`);
         }
 
         if (success) {
             // IDベースでマッピング
             const mapped = chunk.map(original => {
-                // レスポンスから該当IDを探す
                 const match = chunkResults.find(r => String(r.id) === String(original.tempId));
+                let score = 0;
+                let reason = "";
+
                 if (match) {
-                    return {
-                        questionId: original.qId,
-                        subQuestionId: original.sqId,
-                        score: Number(match.score) || 0,
-                        reason: match.reason || ''
-                    };
+                    score = Number(match.score) || 0;
+                    if (score === original.points) reason = "正解 (AI判定)";
+                    else if (score === 0) reason = "不正解 (AI判定)";
+                    else reason = "部分点 (AI判定)";
                 } else {
                     console.warn(`Missing result for ID: ${original.tempId}`);
-                    return {
-                        questionId: original.qId,
-                        subQuestionId: original.sqId,
-                        score: 0,
-                        reason: "採点エラー (結果が見つかりませんでした)"
-                    };
+                    reason = "判定エラー (結果なし)";
                 }
+
+                return {
+                    questionId: original.qId,
+                    subQuestionId: original.sqId,
+                    score: score,
+                    reason: reason
+                };
             });
             allResults = allResults.concat(mapped);
         } else {
-            // 失敗時は0点
             const fallback = chunk.map(p => ({
                 questionId: p.qId,
                 subQuestionId: p.sqId,
                 score: 0,
-                reason: `採点エラー (処理失敗)`
+                reason: `判定エラー (ステータス: ${responseCode})`
             }));
             allResults = allResults.concat(fallback);
         }
-
-        if (i < chunks.length - 1) {
-            Utilities.sleep(1000);
-        }
-    }
+    });
 
     return allResults;
 }
@@ -705,38 +732,152 @@ function testGeminiConnection() {
 }
 
 /**
+ * ポーリング用: 採点結果の確認
+ * @param {string} sessionId
+ */
+function checkGradingStatus(sessionId) {
+    try {
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+        const sheet = ss.getSheetByName(SHEET_NAME_RESPONSES);
+
+        if (!sheet) return JSON.stringify({ status: "PENDING" });
+
+        // 後ろから検索（最新のものが該当するはず）
+        const lastRow = sheet.getLastRow();
+        const data = sheet.getRange(Math.max(2, lastRow - 20), 1, Math.min(21, lastRow - 1), 4).getValues();
+
+        for (let i = data.length - 1; i >= 0; i--) {
+            const row = data[i];
+            // Col 3 is SessionID
+            if (String(row[2]) === String(sessionId)) {
+                // Col 2 (index 1) is Total Score. If "PENDING", still processing.
+                const scoreCell = row[1];
+
+                if (scoreCell === "PENDING") {
+                    return JSON.stringify({ status: "PROCESSING" });
+                }
+
+                // 採点完了していれば詳細JSONを返す
+                // Col 4 (index 3) is JSON details
+                try {
+                    const detail = JSON.parse(row[3]);
+                    if (detail.grading) {
+                        return JSON.stringify({
+                            status: "COMPLETED",
+                            totalScore: scoreCell,
+                            results: detail.grading
+                        });
+                    }
+                } catch (e) {
+                    console.error("JSON parse error in checkStatus", e);
+                }
+            }
+        }
+
+        return JSON.stringify({ status: "NOT_FOUND" });
+
+    } catch (e) {
+        return JSON.stringify({ status: "ERROR", message: e.toString() });
+    }
+}
+
+/**
  * デバッグ用: 採点ロジック単体テスト
  */
 function testGrading() {
-    // Generate 15 dummy questions to test multi-chunk parallel processing (CHUNK_SIZE=7 -> 3 chunks)
-    const dummyQuestions = Array.from({ length: 15 }, (_, i) => ({
+    // Generate 60 dummy questions to force multiple chunks (CHUNK_SIZE=10 -> 6 chunks)
+    // This stress tests the parallelism and API rate limits
+    const dummyQuestions = Array.from({ length: 60 }, (_, i) => ({
         id: `debug_q${i + 1}`,
-        text: `電流の単位は何か？(Test Q${i + 1})`,
+        text: `電気回路におけるオームの法則について説明し、電圧V=10V, 抵抗R=5Ωの時の電流Iを求めよ。(Stress Test Q${i + 1})`,
         points: 10,
-        criteria: '正解は「A」'
+        criteria: 'オームの法則(V=IR)への言及があること。計算結果が2Aであること。'
     }));
 
     const dummyAnswers = {};
     dummyQuestions.forEach(q => {
-        dummyAnswers[q.id] = 'A';
+        dummyAnswers[q.id] = 'オームの法則は電圧と電流と抵抗の関係を示す。I = V/R = 10/5 = 2A です。';
     });
 
     try {
         const start = new Date();
-        // testGradingの中で submitAnswers を呼んでみる（サーバー内部での呼び出しテスト）
+        console.log("Starting Stress Test with 60 questions...");
+        // testGradingの中で submitAnswers を呼んでみる
         const results = submitAnswers(dummyAnswers);
         const end = new Date();
         const duration = (end - start) / 1000;
 
+        console.log(`Stress Test Completed in ${duration}s`);
         return {
             success: true,
-            message: `採点テスト(Internal submitAnswers) 成功 (${duration}秒)`,
+            message: `負荷テスト(60問) 成功 (${duration}秒)`,
             details: results
         };
     } catch (e) {
         return {
             success: false,
-            message: "採点テスト失敗: " + e.toString()
+            message: "負荷テスト失敗: " + e.toString()
         };
+    }
+}
+
+/**
+ * システム診断関数
+ * 本番データ（Spreadsheet）の読み込み状況などをチェックします。
+ */
+function diagnoseSystem() {
+    try {
+        const start = new Date();
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+
+        // 1. Check Questions Sheet
+        const qSheet = ss.getSheetByName(SHEET_NAME_QUESTIONS);
+        if (!qSheet) return "Error: Question sheet not found";
+
+        const lastRow = qSheet.getLastRow();
+        const questionCount = lastRow - 1; // Exclude header
+
+        // Load Questions
+        const questions = getQuestions();
+        const loadedCount = questions.length;
+
+        // Check for anomalies
+        let subQuestionTotal = 0;
+        let maxTextLength = 0;
+        questions.forEach(q => {
+            if (q.subQuestions) subQuestionTotal += q.subQuestions.length;
+            if (q.text.length > maxTextLength) maxTextLength = q.text.length;
+        });
+
+        // 2. Check API Key
+        const apiKey = PropertiesService.getScriptProperties().getProperty(SCRIPT_PROP_KEY_GEMINI_API_KEY);
+        const hasKey = !!apiKey;
+
+        const end = new Date();
+
+        const result = {
+            success: true,
+            checkTime: (end - start) / 1000 + "s",
+            sheetId: ssId,
+            sheetRows: lastRow,
+            loadedQuestions: loadedCount,
+            totalSubQuestions: subQuestionTotal,
+            maxTextLength: maxTextLength,
+            hasApiKey: hasKey,
+            firstQuestion: questions.length > 0 ? questions[0].text.substring(0, 50) + "..." : "None"
+        };
+        console.log(JSON.stringify(result, null, 2));
+        return result;
+
+    } catch (e) {
+        const errorResult = {
+            success: false,
+            message: "Diagnosis Failed: " + e.toString(),
+            stack: e.stack
+        };
+        console.error(JSON.stringify(errorResult));
+        return errorResult;
     }
 }

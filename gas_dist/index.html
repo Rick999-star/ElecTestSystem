@@ -855,19 +855,72 @@
                                 }
                             }
 
-                            // 2. 採点処理
-                            loadingMessage.value = 'AI Grading in progress (this may take 10-20 seconds)...';
-                            const res = await runGas('submitAnswers', JSON.parse(JSON.stringify(answers.value)), sessionId.value);
+                            // 2. 採点処理 (ポーリング対応)
+                            loadingMessage.value = 'AI採点中... (5〜10秒ほどかかります)';
 
-                            if (res.success) {
-                                testResult.value = res;
+                            // submitAnswersはバックグラウンドで走らせるが、
+                            // フロントエンド側は「kickして待つ」のではなく「kickした後にポーリングする」
+
+                            let res = null;
+                            const pollingStart = Date.now();
+
+                            // 非同期で実行開始
+                            runGas('submitAnswers', JSON.parse(JSON.stringify(answers.value)), sessionId.value)
+                                .then(raw => {
+                                    if (raw && (raw.success || typeof raw === 'string')) {
+                                        console.log("Direct response received");
+                                    }
+                                })
+                                .catch(err => {
+                                    console.warn("Main submit connection failed/timed out, switching to polling...", err);
+                                });
+
+                            // ポーリングループ開始
+                            const pollInterval = setInterval(async () => {
+                                try {
+                                    const statusRaw = await runGas('checkGradingStatus', sessionId.value);
+                                    let statusData;
+                                    try {
+                                        statusData = JSON.parse(statusRaw);
+                                    } catch (e) {
+                                        statusData = statusRaw;
+                                    }
+
+                                    console.log("Polling status:", statusData.status);
+
+                                    if (statusData.status === 'COMPLETED') {
+                                        clearInterval(pollInterval);
+                                        res = statusData; // 結果取得
+                                    }
+                                } catch (e) {
+                                    console.error("Polling error", e);
+                                }
+                            }, 5000); // 5秒ごとに確認
+
+                            // ポーリング完了を待つ (最大5分)
+                            const checkDone = async () => {
+                                if (res) return res;
+
+                                if (Date.now() - pollingStart > 300000) {
+                                    clearInterval(pollInterval);
+                                    throw new Error("Timeout: 採点が完了しませんでした。");
+                                }
+
+                                await new Promise(r => setTimeout(r, 1000));
+                                return checkDone();
+                            };
+
+                            const finalRes = await checkDone();
+
+                            if (finalRes.success || finalRes.status === 'COMPLETED') {
+                                testResult.value = finalRes;
                                 isGradingFailed.value = false;
                                 // 成功したら一時保存クリア (Local Storage)
                                 localStorage.removeItem('elec_test_answers');
                                 localStorage.removeItem('elec_test_session_id');
                                 localStorage.removeItem('elec_test_student_name');
                             } else {
-                                throw new Error(res.message);
+                                throw new Error(finalRes.message || "Unknown error");
                             }
                         } catch (e) {
                             console.error(e);
