@@ -421,7 +421,7 @@
 
                                 <div class="flex justify-between items-start mb-4">
                                     <div class="flex items-center gap-3">
-                                        <span class="font-bold text-gray-500">Q{{ idx + 1 }}</span>
+                                        <span class="font-bold text-gray-500">Q{{ getQuestionNumber(res) }}</span>
                                         <span
                                             :class="['px-2 py-1 rounded text-xs font-bold border flex items-center gap-1', getResultStatus(res).class]">
                                             <i :class="['fa-solid', getResultStatus(res).icon]"></i>
@@ -744,6 +744,7 @@
                     const insertChar = (obj, field, char) => { if (!obj[field]) obj[field] = ''; obj[field] += char; };
                     const numberedCircle = (num) => { const chars = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩']; return chars[num - 1] || `(${num})`; };
 
+                    const getQuestionNumber = (res) => { const idx = questions.value.findIndex(q => q.id === res.questionId); return idx >= 0 ? idx + 1 : '?'; };
                     const getSubQNumber = (res) => { /* ... */ const q = questions.value.find(q => q.id === res.questionId); if (!q || !q.subQuestions) return '?'; const idx = q.subQuestions.findIndex(sq => sq.id === res.subQuestionId); return numberedCircle(idx + 1); };
                     const getAnswerRef = (qId, subId) => { /* ... */ if (!answers.value[qId]) answers.value[qId] = {}; if (typeof answers.value[qId] !== 'object') answers.value[qId] = {}; return { get value() { return answers.value[qId][subId] || ''; }, set value(v) { answers.value[qId][subId] = v; } } };
                     const loadQuestions = async () => { /* ... */ isLoading.value = true; loadingMessage.value = 'Loading questions...'; try { const [qData, pTitle] = await Promise.all([runGas('getQuestions'), runGas('getDeployedPatternTitle')]); questions.value = qData || []; currentDeployedPattern.value = pTitle || ''; if (currentView.value === 'admin' && questions.value.length === 0) { addQuestion(); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
@@ -1045,7 +1046,7 @@
                         nextQuestion, prevQuestion, submitTest, resetTest, checkConnection, checkGrading,
                         processImageUrl, handleImageError, insertChar,
                         handleDragStart, handleDragEnter, handleDragOver, handleDrop, dragIndex, dragTargetIndex,
-                        addSubQuestion, removeSubQuestion, numberedCircle, getSubQNumber, getAnswerRef,
+                        addSubQuestion, removeSubQuestion, numberedCircle, getSubQNumber, getQuestionNumber, getAnswerRef,
                         getQuestionText, getUserAnswer, getResultStatus, getCriteria, getModelAnswer,
                         // Pattern Management
                         patternTitle, selectedPatternTitle, savedPatterns, formatDate,
