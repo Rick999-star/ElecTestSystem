@@ -438,6 +438,13 @@
                                     </div>
                                 </div>
 
+                                <div class="mb-4" v-if="getQuestionImage(res)">
+                                    <p class="text-xs text-gray-400 font-bold mb-1">参考画像</p>
+                                    <img :src="processImageUrl(getQuestionImage(res))"
+                                        class="h-32 object-contain rounded border border-gray-100 bg-gray-50"
+                                        referrerpolicy="no-referrer" @error="handleImageError">
+                                </div>
+
                                 <div class="mb-4">
                                     <p class="text-xs text-gray-400 font-bold mb-1">問題文</p>
                                     <p class="text-gray-800 font-medium">{{ getQuestionText(res) }}</p>
@@ -1038,6 +1045,15 @@
                         return target.modelAnswer || '（模範解答設定なし）';
                     };
 
+                    const getQuestionImage = (res) => {
+                        const q = questions.value.find(q => q.id === res.questionId);
+                        if (!q) return '';
+                        // 小問に画像がある場合はそれを優先するロジックにするか、親の画像を出すか。
+                        // 現状のDB構造では親問題にしか画像がない想定が基本だが、もし小問にもあれば以下で取得可能。
+                        // 今回は親問題(q.imageUrl)のみを対象とする。
+                        return q.imageUrl || '';
+                    };
+
                     return {
                         currentView, isLoading, loadingMessage, questions, currentQuestionIndex,
                         isAuthenticated, showPasswordModal, inputPassword, authError, checkPassword, // Export auth vars/funcs
@@ -1047,7 +1063,7 @@
                         processImageUrl, handleImageError, insertChar,
                         handleDragStart, handleDragEnter, handleDragOver, handleDrop, dragIndex, dragTargetIndex,
                         addSubQuestion, removeSubQuestion, numberedCircle, getSubQNumber, getQuestionNumber, getAnswerRef,
-                        getQuestionText, getUserAnswer, getResultStatus, getCriteria, getModelAnswer,
+                        getQuestionText, getUserAnswer, getResultStatus, getCriteria, getModelAnswer, getQuestionImage,
                         // Pattern Management
                         patternTitle, selectedPatternTitle, savedPatterns, formatDate,
                         savePattern, loadPattern, deletePattern, currentDeployedPattern, createNewPattern,
