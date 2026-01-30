@@ -416,7 +416,7 @@ function _updateScoreTable(sessionId, score) {
 function _gradeWithGemini(questions, answers) {
     const apiKey = PropertiesService.getScriptProperties().getProperty(SCRIPT_PROP_KEY_GEMINI_API_KEY);
 
-    // APIキーがない場合はモック採点を行う（動作確認用）
+    // APIキーがない場合はモック採点
     if (!apiKey) {
         return questions.flatMap(q => {
             if (q.subQuestions && q.subQuestions.length > 0) {
@@ -436,7 +436,7 @@ function _gradeWithGemini(questions, answers) {
         });
     }
 
-    // プロンプト構築用に問題をフラット化してリスト作成
+    // 問題のフラット化
     const problemList = [];
     questions.forEach(q => {
         if (q.subQuestions && q.subQuestions.length > 0) {
@@ -466,19 +466,21 @@ function _gradeWithGemini(questions, answers) {
 
     if (problemList.length === 0) return [];
 
-    // 並列処理のためにリクエストを作成
-    const CHUNK_SIZE = 4; // チャンクサイズを縮小 (安定性重視)
+    // チャンクサイズを10に拡大 (リクエスト数削減)
+    const CHUNK_SIZE = 10;
     const chunks = [];
     for (let i = 0; i < problemList.length; i += CHUNK_SIZE) {
         chunks.push(problemList.slice(i, i + CHUNK_SIZE));
     }
 
-    // Gemini API エンドポイント (Gemini 3.0 Flash Preview)
+    // Gemini 3.0 Flash Preview (User Specified)
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
     const requests = chunks.map((chunk, i) => {
+        // プロンプト構築
         let promptText = `
 あなたは電気工学の専門家かつ厳格な採点者です。以下の試験問題に対する学生の回答を一括で採点してください。
+各問題に対して、必ず JSON 配列の形式で [index, score, reason] を返してください。
 
 【採点対象リスト】
 `;
@@ -486,7 +488,7 @@ function _gradeWithGemini(questions, answers) {
             const ans = typeof p.studentAnswer === 'string' ? p.studentAnswer : JSON.stringify(p.studentAnswer);
             promptText += `
 ---
-No.${index + 1}
+ID: ${index}
 [問題ID: ${p.qId}${p.sqId ? '_' + p.sqId : ''}]
 問題文: ${p.text}
 配点: ${p.points}点
@@ -495,49 +497,44 @@ No.${index + 1}
 `;
         });
 
-        promptText += `
----
-
-【採点フォーマット（厳守）】
-以下のJSON配列形式のみを出力してください。Markdownのコードブロックは不要です。
-必ず "No.1" から "No.${chunk.length}" までの全ての採点結果を含めてください。
-
-[
-  { "index": 0, "score": 数値, "reason": "短いフィードバック" },
-  { "index": 1, "score": 数値, "reason": "短いフィードバック" },
-  ...
-]
-
-※ indexは0始まり(No.1に対応)で、入力リストの順序と一致させてください。
-※ 未回答の場合は0点としてください。
-※ 理由(reason)は学生への直接的なフィードバックとして適切かつ簡潔な日本語で記述してください。
-`;
-
+        // リクエストペイロード (Strict JSON Mode)
         return {
             url: url,
             method: 'post',
             contentType: 'application/json',
             payload: JSON.stringify({
                 contents: [{ parts: [{ text: promptText }] }],
-                generationConfig: { response_mime_type: "application/json" }
+                generationConfig: {
+                    response_mime_type: "application/json",
+                    response_schema: {
+                        type: "ARRAY",
+                        items: {
+                            type: "OBJECT",
+                            properties: {
+                                index: { type: "INTEGER" },
+                                score: { type: "INTEGER" },
+                                reason: { type: "STRING" }
+                            },
+                            required: ["index", "score", "reason"]
+                        }
+                    }
+                }
             }),
             muteHttpExceptions: true
         };
     });
 
-    // 並列実行
+    // リトライ付き並列実行
     let responses = [];
     try {
-        console.log(`Starting parallel grading for ${chunks.length} chunks...`);
-        responses = UrlFetchApp.fetchAll(requests);
+        responses = _fetchAllWithRetry(requests);
     } catch (e) {
-        console.error("UrlFetchApp.fetchAll failed completely:", e);
-        // 全体が失敗した場合のフォールバック
+        console.error("Critical Grading Error:", e);
         return problemList.map(p => ({
             questionId: p.qId,
             subQuestionId: p.sqId,
             score: 0,
-            reason: "通信エラーが発生しました: " + e.message
+            reason: "システムエラー: 採点処理に失敗しました。"
         }));
     }
 
@@ -546,44 +543,36 @@ No.${index + 1}
     // レスポンス処理
     responses.forEach((response, i) => {
         const chunk = chunks[i];
-        const responseCode = response.getResponseCode();
-        const responseText = response.getContentText();
 
-        let chunkResults = [];
-        let success = false;
-
-        if (responseCode === 200) {
-            try {
-                const data = JSON.parse(responseText);
-                if (data.candidates && data.candidates.length > 0) {
-                    const text = data.candidates[0].content.parts[0].text;
-                    const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-                    // パース試行
-                    let parsedData;
-                    try {
-                        parsedData = JSON.parse(jsonStr);
-                    } catch (e) {
-                        const match = jsonStr.match(/\[[\s\S]*\]/) || jsonStr.match(/\{[\s\S]*\}/);
-                        if (match) parsedData = JSON.parse(match[0].replace(/\\/g, '\\\\'));
-                    }
-
-                    if (Array.isArray(parsedData)) {
-                        chunkResults = parsedData;
-                        success = true;
-                    } else if (parsedData) {
-                        chunkResults = [parsedData];
-                        success = true;
-                    }
-                }
-            } catch (e) {
-                console.error(`Chunk ${i} parse error:`, e);
-            }
-        } else {
-            console.warn(`Chunk ${i} failed with status ${responseCode}: ${responseText}`);
+        // レスポンスがない、またはエラーの場合
+        if (!response || response.getResponseCode() !== 200) {
+            console.error(`Chunk ${i} Failed:`, response ? response.getContentText() : "No response");
+            allResults = allResults.concat(chunk.map(p => ({
+                questionId: p.qId,
+                subQuestionId: p.sqId,
+                score: 0,
+                reason: "採点エラー: AIからの応答がありませんでした。"
+            })));
+            return;
         }
 
-        if (success) {
-            const mapped = chunkResults.map(r => {
+        try {
+            const data = JSON.parse(response.getContentText());
+            let parsedData = [];
+
+            // Gemini 1.5 Flash JSON Output parsing
+            if (data.candidates && data.candidates[0].content && data.candidates[0].content.parts[0].text) {
+                const text = data.candidates[0].content.parts[0].text;
+                parsedData = JSON.parse(text);
+            }
+
+            if (!Array.isArray(parsedData)) {
+                // Should not happen with strict schema, but fallback
+                parsedData = [];
+            }
+
+            // マッピング
+            const mapped = parsedData.map(r => {
                 const idx = r.index;
                 if (typeof idx !== 'number' || idx < 0 || idx >= chunk.length) return null;
                 const original = chunk[idx];
@@ -594,21 +583,100 @@ No.${index + 1}
                     reason: r.reason || ''
                 };
             }).filter(Boolean);
+
+            // マッピング漏れ（AIが一部の問題をスキップした場合など）を埋める
+            if (mapped.length < chunk.length) {
+                chunk.forEach(p => {
+                    const exists = mapped.find(m => m.questionId === p.qId && m.subQuestionId === p.sqId);
+                    if (!exists) {
+                        mapped.push({
+                            questionId: p.qId,
+                            subQuestionId: p.sqId,
+                            score: 0,
+                            reason: "採点不能: AIが回答を認識できませんでした。"
+                        });
+                    }
+                });
+            }
+
             allResults = allResults.concat(mapped);
-        } else {
-            // 失敗したチャンクは0点埋め (再試行ロジックを入れるならここだが、fetchAllだと個別リトライは複雑なので一旦エラー扱い)
-            // 時間があれば、失敗したリクエストだけ抽出して _callGeminiApi（同期）でリトライする実装も可
-            const fallback = chunk.map(p => ({
+
+        } catch (e) {
+            console.error(`Chunk ${i} Parsing Error:`, e);
+            allResults = allResults.concat(chunk.map(p => ({
                 questionId: p.qId,
                 subQuestionId: p.sqId,
                 score: 0,
-                reason: `採点エラー (Status: ${responseCode})`
-            }));
-            allResults = allResults.concat(fallback);
+                reason: "採点エラー: 結果の解析に失敗しました。"
+            })));
         }
     });
 
     return allResults;
+}
+
+/**
+ * UrlFetchApp.fetchAll ラッパー: 指数バックオフによるリトライ実装
+ * @param {Array} requests - UrlFetchAppのリクエストオブジェクト配列
+ * @param {number} maxRetries - 最大リトライ回数 (デフォルト3)
+ * @return {Array} responses - UrlFetchApp.HTTPResponseの配列 (失敗時はnullが入る可能性あり)
+ */
+function _fetchAllWithRetry(requests, maxRetries = 3) {
+    let results = new Array(requests.length).fill(null);
+    let pendingIndices = requests.map((_, i) => i);
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        if (pendingIndices.length === 0) break;
+
+        const currentRequests = pendingIndices.map(i => requests[i]);
+        let batchResponses = [];
+        let fetchError = null;
+
+        try {
+            // 並列リクエスト実行
+            batchResponses = UrlFetchApp.fetchAll(currentRequests);
+        } catch (e) {
+            fetchError = e;
+            console.warn(`FetchAll Attempt ${attempt + 1} Error: ${e}`);
+        }
+
+        const nextPending = [];
+
+        if (fetchError) {
+            // fetchAll自体が落ちた場合 (DNSエラー等)、全件リトライ対象
+            // ただし、fetchAllは全か無かなので、個別のステータスコードは不明。
+            // ネットワークエラーとみなして全件リトライ。
+            nextPending.push(...pendingIndices);
+        } else {
+            // 個別のレスポンスをチェック
+            batchResponses.forEach((res, i) => {
+                const originalIndex = pendingIndices[i];
+                const code = res.getResponseCode();
+
+                // 429 (Too Many Requests) または 5xx (Server Error) はリトライ
+                if (code === 429 || code >= 500) {
+                    console.warn(`Request ${originalIndex} failed with ${code}. Retrying...`);
+                    nextPending.push(originalIndex);
+                } else {
+                    results[originalIndex] = res;
+                }
+            });
+        }
+
+        pendingIndices = nextPending;
+
+        if (pendingIndices.length > 0) {
+            if (attempt < maxRetries) {
+                // 指数バックオフ (1s, 2s, 4s...) + ジッター
+                const sleepMs = Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 1000);
+                Utilities.sleep(sleepMs);
+            } else {
+                console.error("Max retries reached. Some requests failed.");
+            }
+        }
+    }
+
+    return results;
 }
 
 /**
