@@ -421,11 +421,15 @@
 
                                 <div class="flex justify-between items-start mb-4">
                                     <div class="flex items-center gap-3">
-                                        <span class="font-bold text-gray-500">{{ getQuestionLabel(res) }}</span>
+                                        <span class="font-bold text-gray-500">Q{{ idx + 1 }}</span>
                                         <span
                                             :class="['px-2 py-1 rounded text-xs font-bold border flex items-center gap-1', getResultStatus(res).class]">
                                             <i :class="['fa-solid', getResultStatus(res).icon]"></i>
                                             {{ getResultStatus(res).label }}
+                                        </span>
+                                        <span v-if="res.subQuestionId"
+                                            class="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
+                                            小問 {{ getSubQNumber(res) }}
                                         </span>
                                     </div>
                                     <div class="text-xl font-bold"
@@ -741,18 +745,6 @@
                     const numberedCircle = (num) => { const chars = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩']; return chars[num - 1] || `(${num})`; };
 
                     const getSubQNumber = (res) => { /* ... */ const q = questions.value.find(q => q.id === res.questionId); if (!q || !q.subQuestions) return '?'; const idx = q.subQuestions.findIndex(sq => sq.id === res.subQuestionId); return numberedCircle(idx + 1); };
-                    const getQuestionLabel = (res) => {
-                        const qIdx = questions.value.findIndex(q => q.id === res.questionId);
-                        const qNum = qIdx >= 0 ? qIdx + 1 : '?';
-                        if (res.subQuestionId) {
-                            const q = questions.value[qIdx];
-                            if (q && q.subQuestions) {
-                                const sIdx = q.subQuestions.findIndex(sq => sq.id === res.subQuestionId);
-                                return `Q${qNum}-${sIdx + 1}`;
-                            }
-                        }
-                        return `Q${qNum}`;
-                    };
                     const getAnswerRef = (qId, subId) => { /* ... */ if (!answers.value[qId]) answers.value[qId] = {}; if (typeof answers.value[qId] !== 'object') answers.value[qId] = {}; return { get value() { return answers.value[qId][subId] || ''; }, set value(v) { answers.value[qId][subId] = v; } } };
                     const loadQuestions = async () => { /* ... */ isLoading.value = true; loadingMessage.value = 'Loading questions...'; try { const [qData, pTitle] = await Promise.all([runGas('getQuestions'), runGas('getDeployedPatternTitle')]); questions.value = qData || []; currentDeployedPattern.value = pTitle || ''; if (currentView.value === 'admin' && questions.value.length === 0) { addQuestion(); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
 
@@ -855,72 +847,19 @@
                                 }
                             }
 
-                            // 2. 採点処理 (ポーリング対応)
-                            loadingMessage.value = 'AI採点中... (5〜10秒ほどかかります)';
+                            // 2. 採点処理
+                            loadingMessage.value = 'AI Grading in progress (this may take 10-20 seconds)...';
+                            const res = await runGas('submitAnswers', JSON.parse(JSON.stringify(answers.value)), sessionId.value);
 
-                            // submitAnswersはバックグラウンドで走らせるが、
-                            // フロントエンド側は「kickして待つ」のではなく「kickした後にポーリングする」
-
-                            let res = null;
-                            const pollingStart = Date.now();
-
-                            // 非同期で実行開始
-                            runGas('submitAnswers', JSON.parse(JSON.stringify(answers.value)), sessionId.value)
-                                .then(raw => {
-                                    if (raw && (raw.success || typeof raw === 'string')) {
-                                        console.log("Direct response received");
-                                    }
-                                })
-                                .catch(err => {
-                                    console.warn("Main submit connection failed/timed out, switching to polling...", err);
-                                });
-
-                            // ポーリングループ開始
-                            const pollInterval = setInterval(async () => {
-                                try {
-                                    const statusRaw = await runGas('checkGradingStatus', sessionId.value);
-                                    let statusData;
-                                    try {
-                                        statusData = JSON.parse(statusRaw);
-                                    } catch (e) {
-                                        statusData = statusRaw;
-                                    }
-
-                                    console.log("Polling status:", statusData.status);
-
-                                    if (statusData.status === 'COMPLETED') {
-                                        clearInterval(pollInterval);
-                                        res = statusData; // 結果取得
-                                    }
-                                } catch (e) {
-                                    console.error("Polling error", e);
-                                }
-                            }, 5000); // 5秒ごとに確認
-
-                            // ポーリング完了を待つ (最大5分)
-                            const checkDone = async () => {
-                                if (res) return res;
-
-                                if (Date.now() - pollingStart > 300000) {
-                                    clearInterval(pollInterval);
-                                    throw new Error("Timeout: 採点が完了しませんでした。");
-                                }
-
-                                await new Promise(r => setTimeout(r, 1000));
-                                return checkDone();
-                            };
-
-                            const finalRes = await checkDone();
-
-                            if (finalRes.success || finalRes.status === 'COMPLETED') {
-                                testResult.value = finalRes;
+                            if (res.success) {
+                                testResult.value = res;
                                 isGradingFailed.value = false;
                                 // 成功したら一時保存クリア (Local Storage)
                                 localStorage.removeItem('elec_test_answers');
                                 localStorage.removeItem('elec_test_session_id');
                                 localStorage.removeItem('elec_test_student_name');
                             } else {
-                                throw new Error(finalRes.message || "Unknown error");
+                                throw new Error(res.message);
                             }
                         } catch (e) {
                             console.error(e);
