@@ -72,6 +72,10 @@
             font-size: 0.9rem;
         }
     </style>
+    <!-- KaTeX CSS and JS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 </head>
 
 <body class="bg-gray-50 text-gray-800 antialiased">
@@ -103,6 +107,11 @@
                         class="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1 rounded-full text-xs font-medium transition flex items-center gap-1 border border-gray-300 ml-1"
                         title="採点ロジック単体テスト">
                         <i class="fa-solid fa-bug"></i> 採点テスト
+                    </button>
+                    <button v-if="currentView === 'admin'" @click="showDiagramManager = true"
+                        class="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1 rounded-full text-xs font-medium transition flex items-center gap-1 border border-gray-300 ml-1"
+                        title="参考図・資料の管理">
+                        <i class="fa-solid fa-images"></i> 参考図管理
                     </button>
                     <div class="w-px h-6 bg-gray-300 mx-1"></div>
 
@@ -293,7 +302,13 @@
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 mb-1">問題文</label>
                                     <textarea v-model="q.text" rows="3" id="'q-text-' + index"
-                                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary outline-none transition"></textarea>
+                                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary outline-none transition"
+                                        placeholder="問題文を入力... ($$数式$$ でLaTeX記法が使えます)"></textarea>
+                                    <div v-if="q.text" class="mt-2 p-3 bg-gray-50 rounded border border-gray-200">
+                                        <p class="text-xs text-gray-500 font-bold mb-1">プレビュー:</p>
+                                        <div v-html="renderMath(q.text)" class="text-gray-800 whitespace-pre-wrap">
+                                        </div>
+                                    </div>
                                     <!-- 記号入力ツールバー -->
                                     <div class="flex gap-2 mt-2 text-sm">
                                         <span class="text-gray-500 self-center">特殊記号:</span>
@@ -304,7 +319,18 @@
                                         </button>
                                     </div>
                                 </div>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="mt-4">
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">参考図
+                                        (配線図・シーケンス図など)</label>
+                                    <select v-model="q.referenceDiagramId"
+                                        class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-primary outline-none">
+                                        <option value="">(なし: 問題単体で解く)</option>
+                                        <option v-for="d in referenceDiagrams" :key="d.id" :value="d.id">{{ d.name }}
+                                        </option>
+                                    </select>
+                                    <p class="text-xs text-gray-500 mt-1">※ 管理者用ツールバーの「参考図管理」から図を登録できます。</p>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                                     <div>
                                         <label class="block text-sm font-medium text-gray-700 mb-1">画像URL
                                             (任意)</label>
@@ -368,6 +394,11 @@
                                                 <label class="text-xs font-bold text-gray-500">問題文</label>
                                                 <textarea v-model="subQ.text" rows="2"
                                                     class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary outline-none"></textarea>
+                                                <div v-if="subQ.text"
+                                                    class="mt-1 p-2 bg-gray-50 rounded border border-gray-200">
+                                                    <div v-html="renderMath(subQ.text)"
+                                                        class="text-xs text-gray-800 whitespace-pre-wrap"></div>
+                                                </div>
                                             </div>
                                             <div class="grid grid-cols-2 gap-3">
                                                 <div>
@@ -447,7 +478,8 @@
 
                                 <div class="mb-4">
                                     <p class="text-xs text-gray-400 font-bold mb-1">問題文</p>
-                                    <p class="text-gray-800 font-medium">{{ getQuestionText(res) }}</p>
+                                    <div class="text-gray-800 font-medium whitespace-pre-wrap"
+                                        v-html="renderMath(getQuestionText(res))"></div>
                                 </div>
 
                                 <div class="mb-4">
@@ -470,9 +502,9 @@
                                 <div v-if="getResultStatus(res).label !== '正解'"
                                     class="mt-4 pt-4 border-t border-gray-100">
                                     <p class="text-xs text-red-500 font-bold mb-1">模範解答</p>
-                                    <p class="text-gray-700 bg-red-50 p-3 rounded border border-red-100 whitespace-pre-wrap text-sm"
-                                        style="font-family: 'Segoe UI Symbol', 'Noto Sans JP', sans-serif;">{{
-                                        getModelAnswer(res) }}</p>
+                                    <div class="text-gray-700 bg-red-50 p-3 rounded border border-red-100 whitespace-pre-wrap text-sm"
+                                        style="font-family: 'Segoe UI Symbol', 'Noto Sans JP', sans-serif;"
+                                        v-html="renderMath(getModelAnswer(res))"></div>
                                 </div>
                             </div>
                         </div>
@@ -500,9 +532,14 @@
                             <div v-if="currentQuestion"
                                 class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
                                 <div class="p-6 md:p-8 space-y-6">
-                                    <h3 class="text-xl font-bold text-gray-800 leading-relaxed">{{
-                                        currentQuestion.text
-                                        }}</h3>
+                                    <div v-if="currentQuestion.referenceDiagramId" class="mb-2">
+                                        <button @click="viewDiagram(currentQuestion.referenceDiagramId)"
+                                            class="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold py-3 px-4 rounded-lg border border-blue-200 shadow-sm transition flex items-center justify-center gap-2">
+                                            <i class="fa-solid fa-book-open"></i> 参考図を表示する
+                                        </button>
+                                    </div>
+                                    <div class="text-xl font-bold text-gray-800 leading-relaxed whitespace-pre-wrap"
+                                        v-html="renderMath(currentQuestion.text)"></div>
 
                                     <div v-if="currentQuestion.imageUrl"
                                         class="flex justify-center bg-gray-50 p-4 rounded-lg">
@@ -521,7 +558,8 @@
                                                         numberedCircle(sIdx
                                                         + 1)
                                                         }}</span>
-                                                    <p class="font-bold text-gray-800 pt-1">{{ sq.text }}</p>
+                                                    <div class="font-bold text-gray-800 pt-1 whitespace-pre-wrap"
+                                                        v-html="renderMath(sq.text)"></div>
                                                 </div>
                                                 <textarea v-model="getAnswerRef(currentQuestion.id, sq.id).value"
                                                     class="w-full h-24 px-4 py-3 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-accent outline-none transition resize-none"
@@ -642,6 +680,73 @@
                 </div>
             </div>
         </div>
+
+        <!-- Diagram Manager Modal (Admin) -->
+        <div v-if="showDiagramManager"
+            class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm p-4 animate-fade-in"
+            v-cloak>
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                <div class="bg-gray-800 px-6 py-4 flex justify-between items-center">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-images"></i> 参考図・資料管理
+                    </h3>
+                    <button @click="showDiagramManager = false" class="text-white/70 hover:text-white">
+                        <i class="fa-solid fa-times text-lg"></i>
+                    </button>
+                </div>
+                <div class="p-6 overflow-y-auto flex-grow space-y-4">
+                    <p class="text-sm text-gray-600 bg-gray-100 p-3 rounded">
+                        ここで登録した図は、問題作成時に紐付けることができます。<br>
+                        Google Driveの画像を貼り付ける場合は、共有リンクを使用してください。
+                    </p>
+
+                    <div v-for="(d, idx) in referenceDiagrams" :key="d.id"
+                        class="flex gap-2 items-start bg-gray-50 p-3 rounded border border-gray-200">
+                        <div class="flex-grow space-y-2">
+                            <input type="text" v-model="d.name" placeholder="図の名称 (例: 配線図①)"
+                                class="w-full px-3 py-1.5 text-sm border rounded focus:ring-1 focus:ring-primary outline-none">
+                            <input type="text" v-model="d.url" placeholder="画像URL"
+                                class="w-full px-3 py-1.5 text-sm border rounded focus:ring-1 focus:ring-primary outline-none text-gray-600 font-mono">
+                            <div v-if="d.url" class="mt-1">
+                                <span class="text-xs text-gray-400">プレビュー:</span>
+                                <img :src="processImageUrl(d.url)" class="h-16 object-contain border bg-white mt-1"
+                                    referrerpolicy="no-referrer">
+                            </div>
+                        </div>
+                        <button @click="removeDiagram(idx)" class="text-gray-400 hover:text-red-500 p-2">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </div>
+
+                    <button @click="addDiagram"
+                        class="w-full py-2 border-2 border-dashed border-gray-300 rounded text-gray-500 hover:text-primary hover:border-primary hover:bg-blue-50 transition text-sm font-bold flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-plus"></i> 新しい図を追加
+                    </button>
+                </div>
+                <div class="p-4 border-t bg-gray-50 flex justify-end gap-3">
+                    <button @click="showDiagramManager = false"
+                        class="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded transition text-sm">キャンセル</button>
+                    <button @click="saveDiagramsList"
+                        class="px-6 py-2 bg-primary hover:bg-blue-700 text-white rounded font-bold shadow transition text-sm">
+                        <i class="fa-solid fa-save"></i> 保存する
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Diagram Viewer Modal (Examinee/General) -->
+        <div v-if="showDiagramViewer" class="fixed inset-0 bg-black/90 z-[110] flex flex-col animate-fade-in" v-cloak>
+            <div class="flex justify-end p-4">
+                <button @click="showDiagramViewer = false"
+                    class="text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full w-10 h-10 flex items-center justify-center transition">
+                    <i class="fa-solid fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="flex-grow flex items-center justify-center p-4 overflow-hidden">
+                <img :src="currentDiagramUrl" class="max-w-full max-h-full object-contain rounded shadow-2xl"
+                    referrerpolicy="no-referrer">
+            </div>
+        </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.min.js" crossorigin></script>
@@ -674,6 +779,12 @@
                     const studentName = ref('');
                     const sessionId = ref(null);
                     const nameError = ref('');
+
+                    // Reference Diagrams State
+                    const referenceDiagrams = ref([]);
+                    const showDiagramManager = ref(false); // Admin Modal
+                    const showDiagramViewer = ref(false);  // Examinee Modal
+                    const currentDiagramUrl = ref(''); // For Viewer
 
                     // Retry State
                     const isGradingFailed = ref(false);
@@ -726,8 +837,15 @@
                                 }), 1500);
                                 if (funcName === 'registerCandidate') return setTimeout(() => {
                                     console.log(`Mock Registered: ${args[0]}, Pattern: ${args[1]}`);
+                                    console.log(`Mock Registered: ${args[0]}, Pattern: ${args[1]}`);
                                     resolve('mock-session-id-' + Date.now());
                                 }, 800);
+                                if (funcName === 'getReferenceDiagrams') return setTimeout(() => resolve([
+                                    { id: 'd1', name: '配線図①', url: 'https://via.placeholder.com/600x400?text=Wiring+Diagram+1' },
+                                    { id: 'd2', name: '配線図②', url: 'https://via.placeholder.com/600x400?text=Wiring+Diagram+2' },
+                                    { id: 'd3', name: 'シーケンス図', url: 'https://via.placeholder.com/600x400?text=Sequence+Diagram' }
+                                ]), 500);
+                                if (funcName === 'saveReferenceDiagrams') return setTimeout(() => resolve({ success: true, message: 'Mock Diagrams Saved' }), 500);
                                 return resolve();
                             }
                             google.script.run
@@ -804,6 +922,46 @@
                     const savePattern = async () => { /* ... */ if (!patternTitle.value) return; if (!confirm(`パターン「${patternTitle.value}」として保存しますか？`)) return; isLoading.value = true; loadingMessage.value = 'Saving Pattern...'; try { const res = await runGas('savePattern', patternTitle.value, JSON.parse(JSON.stringify(questions.value))); if (res.success) { alert(res.message); await loadPatternList(); selectedPatternTitle.value = patternTitle.value; } else { alert('失敗: ' + res.message); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
                     const loadPattern = async () => { /* ... */ if (!selectedPatternTitle.value) return; if (!confirm(`パターン「${selectedPatternTitle.value}」を読み込みますか？\n編集中の内容は失われます。`)) return; isLoading.value = true; loadingMessage.value = 'Loading Pattern...'; try { const res = await runGas('getPattern', selectedPatternTitle.value); if (res.success) { questions.value = res.questions; patternTitle.value = selectedPatternTitle.value; loadingMessage.value = 'Syncing to Examinee View...'; const saveRes = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value)), selectedPatternTitle.value); if (saveRes.success) { alert(`パターン「${selectedPatternTitle.value}」を読み込み、受験者画面に反映しました。`); currentDeployedPattern.value = selectedPatternTitle.value; } else { alert('読み込みは成功しましたが、反映に失敗しました: ' + saveRes.message); } } else { alert('失敗: ' + res.message); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
                     const deletePattern = async () => { /* ... */ if (!selectedPatternTitle.value) return; if (!confirm(`本当に「${selectedPatternTitle.value}」を削除しますか？`)) return; isLoading.value = true; try { const res = await runGas('deletePattern', selectedPatternTitle.value); if (res.success) { alert('削除しました。'); selectedPatternTitle.value = ''; await loadPatternList(); } else { alert('失敗: ' + res.message); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
+
+                    // Diagram Logic
+                    const loadReferenceDiagrams = async () => {
+                        try {
+                            const data = await runGas('getReferenceDiagrams');
+                            referenceDiagrams.value = data || [];
+                        } catch (e) {
+                            console.error("Failed to load diagrams", e);
+                        }
+                    };
+
+                    const saveDiagramsList = async () => {
+                        if (!confirm('図リストを保存しますか？')) return;
+                        isLoading.value = true;
+                        try {
+                            const res = await runGas('saveReferenceDiagrams', JSON.parse(JSON.stringify(referenceDiagrams.value)));
+                            if (res.success) {
+                                alert(res.message);
+                                showDiagramManager.value = false;
+                            } else {
+                                alert('失敗: ' + res.message);
+                            }
+                        } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; }
+                    };
+
+                    const addDiagram = () => {
+                        referenceDiagrams.value.push({ id: 'diag-' + Date.now(), name: '新規図面', url: '' });
+                    };
+
+                    const removeDiagram = (index) => {
+                        referenceDiagrams.value.splice(index, 1);
+                    };
+
+                    const viewDiagram = (id) => {
+                        const d = referenceDiagrams.value.find(d => d.id === id);
+                        if (d && d.url) {
+                            currentDiagramUrl.value = processImageUrl(d.url);
+                            showDiagramViewer.value = true;
+                        }
+                    };
 
                     const currentQuestion = computed(() => questions.value[currentQuestionIndex.value]);
                     const isLastQuestion = computed(() => currentQuestionIndex.value === questions.value.length - 1);
@@ -909,7 +1067,14 @@
 
                     onMounted(() => {
                         if (questions.value.length === 0) try { addQuestion(); } catch (e) { }
-                        if (currentView.value === 'admin') try { loadPatternList(); } catch (e) { }
+                        if (currentView.value === 'admin') {
+                            try { loadPatternList(); } catch (e) { }
+                            try { loadReferenceDiagrams(); } catch (e) { }
+                        }
+                        // Always try to load diagrams as they are needed for examinee too
+                        if (currentView.value !== 'admin') {
+                            try { loadReferenceDiagrams(); } catch (e) { }
+                        }
 
                         // Restore logic
                         const savedAns = localStorage.getItem('elec_test_answers');
@@ -1054,6 +1219,51 @@
                         return q.imageUrl || '';
                     };
 
+                    const escapeHtml = (unsafe) => {
+                        if (!unsafe) return '';
+                        return unsafe
+                            .replace(/&/g, "&amp;")
+                            .replace(/</g, "&lt;")
+                            .replace(/>/g, "&gt;")
+                            .replace(/"/g, "&quot;")
+                            .replace(/'/g, "&#039;");
+                    };
+
+                    const renderMath = (text) => {
+                        if (!text) return '';
+                        let temp = text;
+                        const placeholders = [];
+                        const push = (html) => {
+                            placeholders.push(html);
+                            return `__KATEX_${placeholders.length - 1}__`;
+                        };
+
+                        // Render Display Math $$...$$
+                        temp = temp.replace(/\$\$([\s\S]*?)\$\$/g, (match, tex) => {
+                            try {
+                                return push(katex.renderToString(tex, { displayMode: true, throwOnError: false, output: 'html' }));
+                            } catch (e) { return match; }
+                        });
+
+                        // Render Inline Math $...$
+                        // Note: Be careful with text that contains $ but isn't math. 
+                        // But standard convention in this app will be $ as delimiter.
+                        temp = temp.replace(/\$([^$\n]+?)\$/g, (match, tex) => {
+                            try {
+                                return push(katex.renderToString(tex, { displayMode: false, throwOnError: false, output: 'html' }));
+                            } catch (e) { return match; }
+                        });
+
+                        let escaped = escapeHtml(temp);
+
+                        // Restore placeholders
+                        placeholders.forEach((html, i) => {
+                            escaped = escaped.replace(`__KATEX_${i}__`, html);
+                        });
+
+                        return escaped;
+                    };
+
                     return {
                         currentView, isLoading, loadingMessage, questions, currentQuestionIndex,
                         isAuthenticated, showPasswordModal, inputPassword, authError, checkPassword, // Export auth vars/funcs
@@ -1064,9 +1274,13 @@
                         handleDragStart, handleDragEnter, handleDragOver, handleDrop, dragIndex, dragTargetIndex,
                         addSubQuestion, removeSubQuestion, numberedCircle, getSubQNumber, getQuestionNumber, getAnswerRef,
                         getQuestionText, getUserAnswer, getResultStatus, getCriteria, getModelAnswer, getQuestionImage,
+                        renderMath,
                         // Pattern Management
                         patternTitle, selectedPatternTitle, savedPatterns, formatDate,
                         savePattern, loadPattern, deletePattern, currentDeployedPattern, createNewPattern,
+                        // Diagram Management
+                        referenceDiagrams, showDiagramManager, showDiagramViewer, currentDiagramUrl,
+                        loadReferenceDiagrams, saveDiagramsList, addDiagram, removeDiagram, viewDiagram,
                         // Candidate Management
                         showNameModal, studentName, nameError, startExam, cancelExam
                     }

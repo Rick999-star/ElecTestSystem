@@ -58,7 +58,7 @@ function saveQuestions(questions, patternTitle) {
 
         // 既存データをクリアしてヘッダーを設定
         sheet.clear();
-        const header = ['ID', 'Text', 'Image URL', 'Points', 'Criteria', 'SubQuestionsJSON', 'ModelAnswer'];
+        const header = ['ID', 'Text', 'Image URL', 'Points', 'Criteria', 'SubQuestionsJSON', 'ModelAnswer', 'ReferenceDiagramId'];
         sheet.appendRow(header);
 
         // データ書き込み
@@ -70,9 +70,10 @@ function saveQuestions(questions, patternTitle) {
                 q.points,
                 q.criteria || '',
                 q.subQuestions ? JSON.stringify(q.subQuestions) : '',
-                q.modelAnswer || ''
+                q.modelAnswer || '',
+                q.referenceDiagramId || ''
             ]);
-            sheet.getRange(2, 1, rows.length, 7).setValues(rows);
+            sheet.getRange(2, 1, rows.length, 8).setValues(rows);
         }
 
         SpreadsheetApp.flush();
@@ -234,9 +235,9 @@ function getQuestions() {
         const lastRow = sheet.getLastRow();
         if (lastRow < 2) return []; // データがない場合
 
-        // 7列目まで取得 (Col G: ModelAnswer)
+        // 8列目まで取得 (Col H: ReferenceDiagramId)
         const maxCols = sheet.getMaxColumns();
-        const numColsToGet = Math.min(7, maxCols); // 最大でも7列
+        const numColsToGet = Math.min(8, maxCols); // 最大でも8列
 
         const data = sheet.getRange(2, 1, lastRow - 1, numColsToGet).getValues();
 
@@ -253,6 +254,8 @@ function getQuestions() {
 
             // Col 7 (index 6) が modelAnswer
             const modelAnswer = (row.length >= 7) ? row[6] : '';
+            // Col 8 (index 7) が referenceDiagramId
+            const referenceDiagramId = (row.length >= 8) ? row[7] : '';
 
             return {
                 id: row[0],
@@ -261,7 +264,8 @@ function getQuestions() {
                 points: Number(row[3]),
                 criteria: row[4] || '',
                 subQuestions: subQuestions,
-                modelAnswer: modelAnswer
+                modelAnswer: modelAnswer,
+                referenceDiagramId: referenceDiagramId
             };
         });
     } catch (e) {
@@ -785,5 +789,61 @@ function testGrading() {
             success: false,
             message: "採点テスト失敗: " + e.toString()
         };
+    }
+}
+
+const SHEET_NAME_DIAGRAMS = 'ReferenceDiagrams';
+
+/**
+ * 参考図リストの保存
+ * @param {Array} diagrams - [{id, name, url}, ...]
+ */
+function saveReferenceDiagrams(diagrams) {
+    try {
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+        let sheet = ss.getSheetByName(SHEET_NAME_DIAGRAMS);
+        if (!sheet) {
+            sheet = ss.insertSheet(SHEET_NAME_DIAGRAMS);
+        }
+
+        sheet.clear();
+        sheet.appendRow(['ID', 'Name', 'URL']);
+
+        if (diagrams && diagrams.length > 0) {
+            const rows = diagrams.map(d => [d.id, d.name, d.url]);
+            sheet.getRange(2, 1, rows.length, 3).setValues(rows);
+        }
+
+        SpreadsheetApp.flush();
+        return { success: true, message: '図リストを保存しました。' };
+    } catch (e) {
+        console.error(e);
+        return { success: false, message: '図リスト保存エラー: ' + e.toString() };
+    }
+}
+
+/**
+ * 参考図リストの取得
+ */
+function getReferenceDiagrams() {
+    try {
+        const ssId = _getSpreadsheetId();
+        const ss = SpreadsheetApp.openById(ssId);
+        const sheet = ss.getSheetByName(SHEET_NAME_DIAGRAMS);
+        if (!sheet) return [];
+
+        const lastRow = sheet.getLastRow();
+        if (lastRow < 2) return [];
+
+        const data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+        return data.map(row => ({
+            id: row[0],
+            name: row[1],
+            url: row[2]
+        }));
+    } catch (e) {
+        console.error(e);
+        return [];
     }
 }
