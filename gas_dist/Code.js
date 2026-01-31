@@ -428,13 +428,17 @@ function _gradeWithGemini(questions, answers) {
                     questionId: q.id,
                     subQuestionId: sq.id,
                     score: Math.floor(sq.points * 0.8),
-                    reason: "(Mock) Sub-question graded."
+                    reason: "(Mock) Sub-question graded.",
+                    questionText: sq.text,
+                    modelAnswer: sq.modelAnswer || ''
                 }));
             } else {
                 return [{
                     questionId: q.id,
                     score: Math.floor(q.points * 0.8),
-                    reason: "(Mock) Graded."
+                    reason: "(Mock) Graded.",
+                    questionText: q.text,
+                    modelAnswer: q.modelAnswer || ''
                 }];
             }
         });
@@ -452,7 +456,8 @@ function _gradeWithGemini(questions, answers) {
                     text: `[親問題]: ${q.text}\n[小問題]: ${sq.text}`,
                     points: sq.points,
                     criteria: sq.criteria || '特になし',
-                    studentAnswer: (answers[q.id] && answers[q.id][sq.id]) || ""
+                    studentAnswer: (answers[q.id] && answers[q.id][sq.id]) || "",
+                    modelAnswer: sq.modelAnswer || "" // Add model answer
                 });
             });
         } else {
@@ -463,7 +468,8 @@ function _gradeWithGemini(questions, answers) {
                 text: q.text,
                 points: q.points,
                 criteria: q.criteria || '特になし',
-                studentAnswer: answers[q.id] || ""
+                studentAnswer: answers[q.id] || "",
+                modelAnswer: q.modelAnswer || "" // Add model answer
             });
         }
     });
@@ -538,7 +544,9 @@ ID: ${index}
             questionId: p.qId,
             subQuestionId: p.sqId,
             score: 0,
-            reason: "システムエラー: 採点処理に失敗しました。"
+            reason: "システムエラー: 採点処理に失敗しました。",
+            questionText: p.text,
+            modelAnswer: p.modelAnswer
         }));
     }
 
@@ -555,7 +563,9 @@ ID: ${index}
                 questionId: p.qId,
                 subQuestionId: p.sqId,
                 score: 0,
-                reason: "採点エラー: AIからの応答がありませんでした。"
+                reason: "採点エラー: AIからの応答がありませんでした。",
+                questionText: p.text,
+                modelAnswer: p.modelAnswer
             })));
             return;
         }
@@ -564,14 +574,12 @@ ID: ${index}
             const data = JSON.parse(response.getContentText());
             let parsedData = [];
 
-            // Gemini 1.5 Flash JSON Output parsing
             if (data.candidates && data.candidates[0].content && data.candidates[0].content.parts[0].text) {
                 const text = data.candidates[0].content.parts[0].text;
                 parsedData = JSON.parse(text);
             }
 
             if (!Array.isArray(parsedData)) {
-                // Should not happen with strict schema, but fallback
                 parsedData = [];
             }
 
@@ -584,11 +592,13 @@ ID: ${index}
                     questionId: original.qId,
                     subQuestionId: original.sqId,
                     score: Number(r.score) || 0,
-                    reason: r.reason || ''
+                    reason: r.reason || '',
+                    questionText: original.text,    // Include text
+                    modelAnswer: original.modelAnswer // Include model answer
                 };
             }).filter(Boolean);
 
-            // マッピング漏れ（AIが一部の問題をスキップした場合など）を埋める
+            // マッピング漏れ補完
             if (mapped.length < chunk.length) {
                 chunk.forEach(p => {
                     const exists = mapped.find(m => m.questionId === p.qId && m.subQuestionId === p.sqId);
@@ -597,7 +607,9 @@ ID: ${index}
                             questionId: p.qId,
                             subQuestionId: p.sqId,
                             score: 0,
-                            reason: "採点不能: AIが回答を認識できませんでした。"
+                            reason: "採点不能: AIが回答を認識できませんでした。",
+                            questionText: p.text,
+                            modelAnswer: p.modelAnswer
                         });
                     }
                 });
@@ -611,7 +623,9 @@ ID: ${index}
                 questionId: p.qId,
                 subQuestionId: p.sqId,
                 score: 0,
-                reason: "採点エラー: 結果の解析に失敗しました。"
+                reason: "採点エラー: 結果の解析に失敗しました。",
+                questionText: p.text,
+                modelAnswer: p.modelAnswer
             })));
         }
     });

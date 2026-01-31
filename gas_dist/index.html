@@ -1155,6 +1155,7 @@
                     });
 
                     const getQuestionText = (res) => {
+                        if (res.questionText) return res.questionText;
                         const q = questions.value.find(q => q.id === res.questionId);
                         if (!q) return '(不明な問題)';
                         if (res.subQuestionId && q.subQuestions) {
@@ -1199,6 +1200,7 @@
                     };
 
                     const getModelAnswer = (res) => {
+                        if (res.modelAnswer) return res.modelAnswer;
                         const q = questions.value.find(q => q.id === res.questionId);
                         if (!q) return '';
                         let target = q;
