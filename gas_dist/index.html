@@ -1265,11 +1265,11 @@
                     };
 
                     const getQuestionImage = (res) => {
-                        const q = questions.value.find(q => q.id === res.questionId);
+                        // 型不一致(String/Number)を考慮して == で比較
+                        const q = questions.value.find(q => q.id == res.questionId);
                         if (!q) return '';
-                        // 小問に画像がある場合はそれを優先するロジックにするか、親の画像を出すか。
-                        // 現状のDB構造では親問題にしか画像がない想定が基本だが、もし小問にもあれば以下で取得可能。
-                        // 今回は親問題(q.imageUrl)のみを対象とする。
+
+                        // 親問題の画像を表示
                         return q.imageUrl || '';
                     };
 
