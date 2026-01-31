@@ -735,7 +735,7 @@
         </div>
 
         <!-- Diagram Viewer Modal (Examinee/General) -->
-        <div v-if="showDiagramViewer" class="fixed inset-0 bg-black/90 z-[110] flex flex-col animate-fade-in" v-cloak>
+        <div v-if="showDiagramViewer" class="fixed inset-0 bg-black/90 z-[200] flex flex-col animate-fade-in" v-cloak>
             <div class="flex justify-end p-4">
                 <button @click="showDiagramViewer = false"
                     class="text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full w-10 h-10 flex items-center justify-center transition">
@@ -745,6 +745,42 @@
             <div class="flex-grow flex items-center justify-center p-4 overflow-hidden">
                 <img :src="currentDiagramUrl" class="max-w-full max-h-full object-contain rounded shadow-2xl"
                     referrerpolicy="no-referrer">
+            </div>
+        </div>
+
+        <!-- Floating Action Button for Diagram List (Visible on Grading Result Screen) -->
+        <button v-if="testResult && referenceDiagrams.length > 0" @click="showDiagramList = true"
+            class="fixed bottom-6 right-6 bg-blue-600 hover:bg-blue-700 text-white rounded-full p-4 shadow-xl z-50 transition transform hover:scale-105 flex items-center justify-center w-16 h-16"
+            title="参考図一覧を表示">
+            <i class="fa-solid fa-images text-2xl"></i>
+        </button>
+
+        <!-- Diagram List Modal -->
+        <div v-if="showDiagramList"
+            class="fixed inset-0 bg-black/60 z-[120] flex items-center justify-center backdrop-blur-sm p-4 animate-fade-in"
+            v-cloak>
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[80vh]">
+                <div class="bg-blue-600 px-6 py-4 flex justify-between items-center">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-images"></i> 参考図一覧
+                    </h3>
+                    <button @click="showDiagramList = false" class="text-white/70 hover:text-white">
+                        <i class="fa-solid fa-times text-lg"></i>
+                    </button>
+                </div>
+                <div class="p-6 overflow-y-auto flex-grow space-y-3">
+                    <p class="text-gray-600 text-sm mb-4">閲覧したい図を選択してください。</p>
+                    <button v-for="d in referenceDiagrams" :key="d.id"
+                        @click="viewDiagram(d.id); showDiagramList = false"
+                        class="w-full text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-300 rounded-lg p-4 transition flex items-center justify-between group">
+                        <span class="font-bold text-gray-700 group-hover:text-blue-700">{{ d.name }}</span>
+                        <i class="fa-solid fa-chevron-right text-gray-400 group-hover:text-blue-500"></i>
+                    </button>
+                </div>
+                <div class="p-4 border-t bg-gray-50 flex justify-end">
+                    <button @click="showDiagramList = false"
+                        class="px-5 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-medium transition text-sm">閉じる</button>
+                </div>
             </div>
         </div>
     </div>
@@ -784,6 +820,7 @@
                     const referenceDiagrams = ref([]);
                     const showDiagramManager = ref(false); // Admin Modal
                     const showDiagramViewer = ref(false);  // Examinee Modal
+                    const showDiagramList = ref(false);    // Examinee List Modal
                     const currentDiagramUrl = ref(''); // For Viewer
 
                     // Retry State
@@ -1281,7 +1318,7 @@
                         patternTitle, selectedPatternTitle, savedPatterns, formatDate,
                         savePattern, loadPattern, deletePattern, currentDeployedPattern, createNewPattern,
                         // Diagram Management
-                        referenceDiagrams, showDiagramManager, showDiagramViewer, currentDiagramUrl,
+                        referenceDiagrams, showDiagramManager, showDiagramViewer, showDiagramList, currentDiagramUrl,
                         loadReferenceDiagrams, saveDiagramsList, addDiagram, removeDiagram, viewDiagram,
                         // Candidate Management
                         showNameModal, studentName, nameError, startExam, cancelExam
