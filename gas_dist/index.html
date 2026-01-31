@@ -90,7 +90,7 @@
     </script>
 
     <div id="app" class="min-h-screen flex flex-col" v-cloak>
-        <header class="bg-white shadow-sm z-10 sticky top-0">
+        <header class="bg-white shadow-sm z-30 sticky top-0">
             <div class="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
                 <h1 class="text-xl font-bold text-gray-800 tracking-tight flex items-center">
                     <i class="fa-solid fa-bolt text-yellow-500 mr-2"></i>
@@ -257,7 +257,7 @@
 
 
                     <div
-                        class="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                        class="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-gray-100 sticky top-[72px] z-20">
                         <div>
                             <h2 class="text-lg font-semibold text-gray-800">問題作成</h2>
                             <p class="text-sm text-gray-500">スプレッドシートに保存されます</p>
@@ -508,8 +508,14 @@
                                 </div>
                             </div>
                         </div>
-                        <button @click="resetTest"
-                            class="w-full bg-gray-600 text-white py-3 rounded-lg hover:bg-gray-700 transition">終了して戻る</button>
+                        <div class="flex gap-4">
+                            <button @click="downloadResultsCSV"
+                                class="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg transition border border-green-700 shadow-sm flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-file-csv"></i> 結果を保存(CSV)
+                            </button>
+                            <button @click="resetTest"
+                                class="flex-1 bg-gray-600 text-white py-3 rounded-lg hover:bg-gray-700 transition">終了して戻る</button>
+                        </div>
                     </div>
 
                     <div v-else class="space-y-6">
@@ -538,6 +544,15 @@
                                             <i class="fa-solid fa-book-open"></i> 参考図を表示する
                                         </button>
                                     </div>
+
+                                    <!-- Pre-grading CSV Export Button (Visible on all questions for convenience, or adjust as needed) -->
+                                    <div class="flex justify-end mb-2">
+                                        <button @click="downloadAnswersCSV"
+                                            class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded border border-gray-300 transition flex items-center gap-1">
+                                            <i class="fa-solid fa-file-csv"></i> 解答を一時保存(CSV)
+                                        </button>
+                                    </div>
+
                                     <div class="text-xl font-bold text-gray-800 leading-relaxed whitespace-pre-wrap"
                                         v-html="renderMath(currentQuestion.text)"></div>
 
@@ -1268,6 +1283,129 @@
                             .replace(/'/g, "&#039;");
                     };
 
+                    // --- CSV Export Logic ---
+                    const downloadCSV = (filename, headers, rows) => {
+                        // BOM for Excel
+                        const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+                        let csvContent = headers.join(',') + '\n';
+
+                        rows.forEach(row => {
+                            const processedRow = row.map(cell => {
+                                let val = String(cell || '');
+                                // Escape double quotes and wrap in quotes if necessary
+                                if (val.search(/("|,|\n)/g) >= 0) {
+                                    val = `"${val.replace(/"/g, '""')}"`;
+                                }
+                                return val;
+                            });
+                            csvContent += processedRow.join(',') + '\n';
+                        });
+
+                        const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
+                        const link = document.createElement('a');
+                        if (link.download !== undefined) {
+                            const url = URL.createObjectURL(blob);
+                            link.setAttribute('href', url);
+                            link.setAttribute('download', filename);
+                            link.style.visibility = 'hidden';
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                        }
+                    };
+
+                    const getFormattedTimestamp = () => {
+                        const now = new Date();
+                        return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+                    };
+
+                    const cleanText = (text) => {
+                        if (!text) return '';
+                        // Remove HTML tags or Markdown-like syntax if needed, but keeping it simple for now
+                        // Just strip newlines for CSV cell safety (though the CSV generator handles them, it might be cleaner)
+                        // Actually, let's keep newlines but ensure they are quoted (handled by downloadCSV)
+                        return text;
+                    };
+
+                    const downloadAnswersCSV = () => {
+                        if (questions.value.length === 0) return;
+                        const filename = `ElecTest_Answers_${studentName.value || 'Candidate'}_${getFormattedTimestamp()}.csv`;
+                        const headers = ['問題番号', '問題文', 'あなたの回答'];
+                        const rows = [];
+
+                        questions.value.forEach((q, idx) => {
+                            // Main question
+                            if (!q.subQuestions || q.subQuestions.length === 0) {
+                                const ans = answers.value[q.id] || '';
+                                rows.push([
+                                    `Q${idx + 1}`,
+                                    cleanText(q.text),
+                                    cleanText(ans)
+                                ]);
+                            } else {
+                                // Has subquestions
+                                rows.push([`Q${idx + 1}`, cleanText(q.text), '(以下小問)']);
+                                q.subQuestions.forEach((sq, sIdx) => {
+                                    const ans = (answers.value[q.id] && answers.value[q.id][sq.id]) || '';
+                                    rows.push([
+                                        `Q${idx + 1}-${sIdx + 1}`,
+                                        cleanText(sq.text),
+                                        cleanText(ans)
+                                    ]);
+                                });
+                            }
+                        });
+
+                        downloadCSV(filename, headers, rows);
+                    };
+
+                    const downloadResultsCSV = () => {
+                        if (!testResult.value) return;
+                        const filename = `ElecTest_Result_${studentName.value || 'Candidate'}_${getFormattedTimestamp()}.csv`;
+                        // Header: 問題番号, 結果, 得点, 配点, 問題文, あなたの回答, 模範解答, AI講評
+                        const headers = ['問題番号', '結果', '得点', '配点', '問題文', 'あなたの回答', '模範解答', 'AI講評'];
+                        const rows = [];
+
+                        testResult.value.results.forEach(res => {
+                            const q = questions.value.find(q => q.id === res.questionId);
+                            if (!q) return;
+
+                            let qNumStr = `Q${getQuestionNumber(res)}`;
+                            let problemText = q.text;
+                            let maxPoints = q.points;
+                            let modelAns = q.modelAnswer || '';
+
+                            if (res.subQuestionId && q.subQuestions) {
+                                const sq = q.subQuestions.find(sq => sq.id === res.subQuestionId);
+                                if (sq) {
+                                    qNumStr += `-${getSubQNumber(res).replace(/[()]/g, '')}`; // Remove parens for cleaner CSV
+                                    problemText = sq.text;
+                                    maxPoints = sq.points;
+                                    modelAns = sq.modelAnswer || '';
+                                }
+                            }
+
+                            const status = getResultStatus(res).label;
+                            const userAns = getUserAnswer(res);
+
+                            rows.push([
+                                qNumStr,
+                                status,
+                                res.score,
+                                maxPoints,
+                                cleanText(problemText),
+                                cleanText(userAns),
+                                cleanText(modelAns),
+                                cleanText(res.reason)
+                            ]);
+                        });
+
+                        // Add Total Score Row
+                        rows.unshift(['合計', '', testResult.value.totalScore, totalMaxScore.value, '', '', '', '']);
+
+                        downloadCSV(filename, headers, rows);
+                    };
+
                     const renderMath = (text) => {
                         if (!text) return '';
                         let temp = text;
@@ -1313,7 +1451,7 @@
                         handleDragStart, handleDragEnter, handleDragOver, handleDrop, dragIndex, dragTargetIndex,
                         addSubQuestion, removeSubQuestion, numberedCircle, getSubQNumber, getQuestionNumber, getAnswerRef,
                         getQuestionText, getUserAnswer, getResultStatus, getCriteria, getModelAnswer, getQuestionImage,
-                        renderMath,
+                        renderMath, downloadAnswersCSV, downloadResultsCSV,
                         // Pattern Management
                         patternTitle, selectedPatternTitle, savedPatterns, formatDate,
                         savePattern, loadPattern, deletePattern, currentDeployedPattern, createNewPattern,
