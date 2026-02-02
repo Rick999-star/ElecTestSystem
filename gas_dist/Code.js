@@ -58,7 +58,14 @@ function saveQuestions(questions, patternTitle) {
 
         // 既存データをクリアしてヘッダーを設定
         sheet.clear();
-        const header = ['ID', 'Text', 'Image URL', 'Points', 'Criteria', 'SubQuestionsJSON', 'ModelAnswer', 'ReferenceDiagramId'];
+
+        // 列数が不足している場合は追加 (Col 9: IsPublished まで必要)
+        const currentMaxCols = sheet.getMaxColumns();
+        if (currentMaxCols < 9) {
+            sheet.insertColumnsAfter(currentMaxCols, 9 - currentMaxCols);
+        }
+
+        const header = ['ID', 'Text', 'Image URL', 'Points', 'Criteria', 'SubQuestionsJSON', 'ModelAnswer', 'ReferenceDiagramId', 'IsPublished'];
         sheet.appendRow(header);
 
         // データ書き込み
@@ -71,9 +78,11 @@ function saveQuestions(questions, patternTitle) {
                 q.criteria || '',
                 q.subQuestions ? JSON.stringify(q.subQuestions) : '',
                 q.modelAnswer || '',
-                q.referenceDiagramId || ''
+                q.modelAnswer || '',
+                q.referenceDiagramId || '',
+                (q.isPublished === false) ? 'FALSE' : 'TRUE' // Explicitly save as string to prevent type ambiguity
             ]);
-            sheet.getRange(2, 1, rows.length, 8).setValues(rows);
+            sheet.getRange(2, 1, rows.length, 9).setValues(rows);
         }
 
         SpreadsheetApp.flush();
@@ -223,8 +232,9 @@ function deletePattern(title) {
 
 /**
  * 問題データの取得 (受験画面用)
+ * @param {boolean} includeHidden - 非公開問題も含めるかどうか (Admin用)
  */
-function getQuestions() {
+function getQuestions(includeHidden) {
     try {
         const ssId = _getSpreadsheetId();
         const ss = SpreadsheetApp.openById(ssId);
@@ -235,14 +245,14 @@ function getQuestions() {
         const lastRow = sheet.getLastRow();
         if (lastRow < 2) return []; // データがない場合
 
-        // 8列目まで取得 (Col H: ReferenceDiagramId)
+        // 9列目まで取得 (Col I: IsPublished)
         const maxCols = sheet.getMaxColumns();
-        const numColsToGet = Math.min(8, maxCols); // 最大でも8列
+        const numColsToGet = Math.min(9, maxCols);
 
         const data = sheet.getRange(2, 1, lastRow - 1, numColsToGet).getValues();
 
         // オブジェクト配列に変換
-        return data.map(row => {
+        const questions = data.map(row => {
             let subQuestions = [];
             if (row.length >= 6 && row[5]) {
                 try {
@@ -256,6 +266,19 @@ function getQuestions() {
             const modelAnswer = (row.length >= 7) ? row[6] : '';
             // Col 8 (index 7) が referenceDiagramId
             const referenceDiagramId = (row.length >= 8) ? row[7] : '';
+            // Col 9 (index 8) が isPublished
+            // String "TRUE"/"FALSE" として保存されていることを前提にする
+            // 空の場合は旧互換で True
+            let isPublished = true;
+            if (row.length >= 9 && row[8] !== '') {
+                const val = String(row[8]).trim().toUpperCase();
+                if (val === 'FALSE') {
+                    isPublished = false;
+                } else {
+                    // "TRUE" or anything else is treated as visible
+                    isPublished = true;
+                }
+            }
 
             return {
                 id: row[0],
@@ -265,9 +288,17 @@ function getQuestions() {
                 criteria: row[4] || '',
                 subQuestions: subQuestions,
                 modelAnswer: modelAnswer,
-                referenceDiagramId: referenceDiagramId
+                referenceDiagramId: referenceDiagramId,
+                isPublished: isPublished
             };
         });
+
+        if (includeHidden) {
+            return questions;
+        } else {
+            // isPublished が true (または非false) のものだけ残す
+            return questions.filter(q => q.isPublished !== false);
+        }
     } catch (e) {
         console.error(e);
         // エラー時は空リストを返す（またはエラーをスロー）
@@ -353,7 +384,9 @@ function saveTemporaryAnswers(answers, sessionId) {
  */
 function submitAnswers(answers, sessionId) {
     try {
-        const questions = getQuestions();
+        // 採点時は全問題(非公開含む)を取得して、回答が存在すれば採点できるようにする
+        // (ユーザーが古い画面を開いたまま回答した場合などの整合性のため)
+        const questions = getQuestions(true);
 
         // 1. Gemini APIによる採点 (各問題ごと)
         const gradingResults = _gradeWithGemini(questions, answers);

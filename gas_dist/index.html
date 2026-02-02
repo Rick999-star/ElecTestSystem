@@ -281,6 +281,25 @@
                                 <div class="flex items-center gap-3">
                                     <i class="fa-solid fa-grip-vertical text-gray-400"></i>
                                     <span class="font-bold text-gray-600">Q{{ index + 1 }}</span>
+
+                                    <!-- Publish Toggle -->
+                                    <label
+                                        class="flex items-center cursor-pointer ml-4 select-none bg-white px-2 py-1 rounded border border-gray-200 hover:border-gray-300 transition"
+                                        title="受験者に公開するかどうか">
+                                        <div class="relative">
+                                            <input type="checkbox" v-model="q.isPublished" class="sr-only">
+                                            <div
+                                                :class="['w-9 h-5 rounded-full shadow-inner transition-colors duration-200', (q.isPublished === undefined || q.isPublished) ? 'bg-green-500' : 'bg-gray-300']">
+                                            </div>
+                                            <div
+                                                :class="['absolute left-0.5 top-0.5 bg-white w-4 h-4 rounded-full transition-transform duration-200 shadow-sm', (q.isPublished === undefined || q.isPublished) ? 'translate-x-4' : 'translate-x-0']">
+                                            </div>
+                                        </div>
+                                        <div class="ml-2 text-xs font-bold w-12 text-center"
+                                            :class="(q.isPublished === undefined || q.isPublished) ? 'text-green-600' : 'text-gray-400'">
+                                            {{ (q.isPublished === undefined || q.isPublished) ? '公開' : '非公開' }}
+                                        </div>
+                                    </label>
                                 </div>
                                 <div class="flex gap-2">
                                     <button @click="moveQuestion(index, -1)" :disabled="index === 0"
@@ -298,7 +317,7 @@
                                     </button>
                                 </div>
                             </div>
-                            <div class="p-5 space-y-4">
+                            <div class="p-5 space-y-4" :class="{'opacity-60 bg-gray-50': q.isPublished === false}">
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 mb-1">問題文</label>
                                     <textarea v-model="q.text" rows="3" id="'q-text-' + index"
@@ -924,7 +943,7 @@
                     const getQuestionNumber = (res) => { const idx = questions.value.findIndex(q => q.id === res.questionId); return idx >= 0 ? idx + 1 : '?'; };
                     const getSubQNumber = (res) => { /* ... */ const q = questions.value.find(q => q.id === res.questionId); if (!q || !q.subQuestions) return '?'; const idx = q.subQuestions.findIndex(sq => sq.id === res.subQuestionId); return numberedCircle(idx + 1); };
                     const getAnswerRef = (qId, subId) => { /* ... */ if (!answers.value[qId]) answers.value[qId] = {}; if (typeof answers.value[qId] !== 'object') answers.value[qId] = {}; return { get value() { return answers.value[qId][subId] || ''; }, set value(v) { answers.value[qId][subId] = v; } } };
-                    const loadQuestions = async () => { /* ... */ isLoading.value = true; loadingMessage.value = 'Loading questions...'; try { const [qData, pTitle] = await Promise.all([runGas('getQuestions'), runGas('getDeployedPatternTitle')]); questions.value = qData || []; currentDeployedPattern.value = pTitle || ''; if (currentView.value === 'admin' && questions.value.length === 0) { addQuestion(); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
+                    const loadQuestions = async (forceIsAdmin = null) => { /* ... */ isLoading.value = true; loadingMessage.value = 'Loading questions...'; try { const isAdmin = forceIsAdmin !== null ? forceIsAdmin : (currentView.value === 'admin'); const [qData, pTitle] = await Promise.all([runGas('getQuestions', isAdmin), runGas('getDeployedPatternTitle')]); questions.value = qData || []; currentDeployedPattern.value = pTitle || ''; if (currentView.value === 'admin' && questions.value.length === 0) { addQuestion(); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
 
                     const checkPassword = () => { /* ... */ if (inputPassword.value === 'denkitest') { isAuthenticated.value = true; showPasswordModal.value = false; inputPassword.value = ''; authError.value = ''; switchView('admin'); } else { authError.value = 'パスワードが間違っています'; inputPassword.value = ''; } };
 
@@ -942,13 +961,13 @@
                             } else {
                                 showNameModal.value = true;
                                 nameError.value = '';
-                                loadQuestions();
+                                loadQuestions(false);
                                 currentView.value = 'examinee';
                             }
                         } else {
                             currentView.value = view;
                             if (view === 'admin') {
-                                loadQuestions();
+                                loadQuestions(true);
                                 loadPatternList();
                             }
                         }
@@ -963,7 +982,7 @@
                     };
 
                     // ... (Question manipulation methods omitted) ...
-                    const addQuestion = () => { questions.value.push({ id: Date.now().toString(), text: '', imageUrl: '', points: 10, criteria: '', modelAnswer: '' }); };
+                    const addQuestion = () => { questions.value.push({ id: Date.now().toString(), text: '', imageUrl: '', points: 10, criteria: '', modelAnswer: '', isPublished: true }); };
                     const removeQuestion = (index) => { questions.value.splice(index, 1); };
                     const addSubQuestion = (q) => { if (!q.subQuestions) q.subQuestions = []; q.subQuestions.push({ id: 'sq-' + Date.now() + Math.random().toString(36).substr(2, 5), text: '', points: 5, criteria: '', modelAnswer: '' }); };
                     const removeSubQuestion = (q, index) => { q.subQuestions.splice(index, 1); };
