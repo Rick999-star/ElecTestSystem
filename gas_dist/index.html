@@ -230,6 +230,12 @@
                                         <i class="fa-solid fa-trash"></i>
                                     </button>
                                 </div>
+                                <div class="mt-2 flex justify-end">
+                                    <button @click="deployPattern" :disabled="!selectedPatternTitle"
+                                        class="bg-teal-600 hover:bg-teal-700 text-white px-4 py-1.5 rounded text-sm font-medium transition disabled:bg-gray-300 flex items-center gap-1 shadow-sm">
+                                        <i class="fa-solid fa-satellite-dish"></i> このパターンを公開(Deploy)
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -547,6 +553,14 @@
                                 <span class="text-sm font-medium text-gray-500">問題 {{ currentQuestionIndex + 1 }} /
                                     {{
                                     questions.length }}</span>
+                                <button @click="reloadExam"
+                                    class="text-xs bg-white text-gray-500 hover:text-primary border border-gray-300 hover:border-primary px-3 py-1 rounded-full transition shadow-sm flex items-center gap-1">
+                                    <i class="fa-solid fa-rotate"></i> 最新の問題を取得
+                                </button>
+                                <button @click="quitExam"
+                                    class="ml-2 text-xs bg-white text-red-500 hover:text-red-700 border border-gray-300 hover:border-red-500 px-3 py-1 rounded-full transition shadow-sm flex items-center gap-1">
+                                    <i class="fa-solid fa-right-from-bracket"></i> 採点せずに終了
+                                </button>
                             </div>
                             <div class="w-full bg-gray-200 rounded-full h-2.5 mb-6">
                                 <div class="bg-accent h-2.5 rounded-full transition-all duration-300"
@@ -943,7 +957,62 @@
                     const getQuestionNumber = (res) => { const idx = questions.value.findIndex(q => q.id === res.questionId); return idx >= 0 ? idx + 1 : '?'; };
                     const getSubQNumber = (res) => { /* ... */ const q = questions.value.find(q => q.id === res.questionId); if (!q || !q.subQuestions) return '?'; const idx = q.subQuestions.findIndex(sq => sq.id === res.subQuestionId); return numberedCircle(idx + 1); };
                     const getAnswerRef = (qId, subId) => { /* ... */ if (!answers.value[qId]) answers.value[qId] = {}; if (typeof answers.value[qId] !== 'object') answers.value[qId] = {}; return { get value() { return answers.value[qId][subId] || ''; }, set value(v) { answers.value[qId][subId] = v; } } };
-                    const loadQuestions = async (forceIsAdmin = null) => { /* ... */ isLoading.value = true; loadingMessage.value = 'Loading questions...'; try { const isAdmin = forceIsAdmin !== null ? forceIsAdmin : (currentView.value === 'admin'); const [qData, pTitle] = await Promise.all([runGas('getQuestions', isAdmin), runGas('getDeployedPatternTitle')]); questions.value = qData || []; currentDeployedPattern.value = pTitle || ''; if (currentView.value === 'admin' && questions.value.length === 0) { addQuestion(); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
+                    const loadQuestions = async (forceIsAdmin = null, forceReload = false) => {
+                        isLoading.value = true;
+                        loadingMessage.value = 'Loading questions...';
+                        try {
+                            const isAdmin = forceIsAdmin !== null ? forceIsAdmin : (currentView.value === 'admin');
+
+                            // Use cached questions for examinees if available and not forcing reload
+                            if (!isAdmin && !forceReload) {
+                                const cached = localStorage.getItem('elec_test_questions_v2');
+                                if (cached) {
+                                    try {
+                                        const parsed = JSON.parse(cached);
+                                        if (parsed.questions && parsed.questions.length > 0) {
+                                            questions.value = parsed.questions;
+                                            currentDeployedPattern.value = parsed.patternTitle || '';
+                                            console.log("Loaded questions from cache (v2)");
+                                            isLoading.value = false;
+                                            return;
+                                        }
+                                    } catch (e) {
+                                        console.warn("Failed to parse cached questions", e);
+                                        localStorage.removeItem('elec_test_questions_v2');
+                                    }
+                                }
+                            }
+
+                            const [qData, pTitle] = await Promise.all([runGas('getQuestions', isAdmin), runGas('getDeployedPatternTitle')]);
+                            questions.value = qData || [];
+                            currentDeployedPattern.value = pTitle || '';
+
+                            // Cache for examinees
+                            if (!isAdmin && questions.value.length > 0) {
+                                try {
+                                    // Deep clone to ensure clean JSON object and remove Vue proxies
+                                    const cleanQuestions = JSON.parse(JSON.stringify(questions.value));
+                                    localStorage.setItem('elec_test_questions_v2', JSON.stringify({
+                                        questions: cleanQuestions,
+                                        patternTitle: currentDeployedPattern.value
+                                    }));
+                                    console.log("Questions cached to localStorage (v2)");
+                                } catch (e) {
+                                    console.error("Failed to cache questions", e);
+                                    // If quota exceeded, maybe try to save without images? 
+                                    // But images are needed. For now just log error.
+                                }
+                            }
+
+                            if (currentView.value === 'admin' && questions.value.length === 0) {
+                                addQuestion();
+                            }
+                        } catch (e) {
+                            alert('Error: ' + e);
+                        } finally {
+                            isLoading.value = false;
+                        }
+                    };
 
                     const checkPassword = () => { /* ... */ if (inputPassword.value === 'denkitest') { isAuthenticated.value = true; showPasswordModal.value = false; inputPassword.value = ''; authError.value = ''; switchView('admin'); } else { authError.value = 'パスワードが間違っています'; inputPassword.value = ''; } };
 
@@ -956,12 +1025,14 @@
                         }
 
                         if (view === 'examinee') {
+                            // Always load questions (cached if possible) to ensure we have data even after reload
+                            await loadQuestions(false);
+
                             if (sessionId.value && studentName.value) {
                                 currentView.value = 'examinee';
                             } else {
                                 showNameModal.value = true;
                                 nameError.value = '';
-                                loadQuestions(false);
                                 currentView.value = 'examinee';
                             }
                         } else {
@@ -991,8 +1062,48 @@
                     const formatDate = (dateStr) => { if (!dateStr) return ''; const d = new Date(dateStr); return d.toLocaleDateString() + ' ' + d.toLocaleTimeString(); };
                     const loadPatternList = async () => { /* ... */ try { const list = await runGas('getPatternList'); savedPatterns.value = list; } catch (e) { console.error('Failed to load patterns', e); } };
                     const savePattern = async () => { /* ... */ if (!patternTitle.value) return; if (!confirm(`パターン「${patternTitle.value}」として保存しますか？`)) return; isLoading.value = true; loadingMessage.value = 'Saving Pattern...'; try { const res = await runGas('savePattern', patternTitle.value, JSON.parse(JSON.stringify(questions.value))); if (res.success) { alert(res.message); await loadPatternList(); selectedPatternTitle.value = patternTitle.value; } else { alert('失敗: ' + res.message); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
-                    const loadPattern = async () => { /* ... */ if (!selectedPatternTitle.value) return; if (!confirm(`パターン「${selectedPatternTitle.value}」を読み込みますか？\n編集中の内容は失われます。`)) return; isLoading.value = true; loadingMessage.value = 'Loading Pattern...'; try { const res = await runGas('getPattern', selectedPatternTitle.value); if (res.success) { questions.value = res.questions; patternTitle.value = selectedPatternTitle.value; loadingMessage.value = 'Syncing to Examinee View...'; const saveRes = await runGas('saveQuestions', JSON.parse(JSON.stringify(questions.value)), selectedPatternTitle.value); if (saveRes.success) { alert(`パターン「${selectedPatternTitle.value}」を読み込み、受験者画面に反映しました。`); currentDeployedPattern.value = selectedPatternTitle.value; } else { alert('読み込みは成功しましたが、反映に失敗しました: ' + saveRes.message); } } else { alert('失敗: ' + res.message); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
+                    const loadPattern = async () => {
+                        if (!selectedPatternTitle.value) return;
+                        if (!confirm(`パターン「${selectedPatternTitle.value}」を読み込みますか？\n編集中の内容は失われます。\n（読み込んでも「公開」するまで受験者には反映されません）`)) return;
+                        isLoading.value = true;
+                        loadingMessage.value = 'Loading Pattern...';
+                        try {
+                            const res = await runGas('getPattern', selectedPatternTitle.value);
+                            if (res.success) {
+                                questions.value = res.questions;
+                                patternTitle.value = selectedPatternTitle.value;
+                                alert(`パターン「${selectedPatternTitle.value}」を読み込みました。\n編集内容はまだ公開されていません。`);
+                            } else {
+                                alert('失敗: ' + res.message);
+                            }
+                        } catch (e) {
+                            alert('Error: ' + e);
+                        } finally {
+                            isLoading.value = false;
+                        }
+                    };
                     const deletePattern = async () => { /* ... */ if (!selectedPatternTitle.value) return; if (!confirm(`本当に「${selectedPatternTitle.value}」を削除しますか？`)) return; isLoading.value = true; try { const res = await runGas('deletePattern', selectedPatternTitle.value); if (res.success) { alert('削除しました。'); selectedPatternTitle.value = ''; await loadPatternList(); } else { alert('失敗: ' + res.message); } } catch (e) { alert('Error: ' + e); } finally { isLoading.value = false; } };
+                    const deployPattern = async () => {
+                        if (!selectedPatternTitle.value) return;
+                        if (!confirm(`パターン「${selectedPatternTitle.value}」を公開（Deploy）しますか？\nこれが現在の試験問題として設定されます。`)) return;
+                        isLoading.value = true;
+                        loadingMessage.value = 'Deploying Pattern...';
+                        try {
+                            const res = await runGas('deployPattern', selectedPatternTitle.value);
+                            if (res.success) {
+                                alert(`パターン「${selectedPatternTitle.value}」を公開しました。\n受験者はこの試験にアクセスします。`);
+                                currentDeployedPattern.value = selectedPatternTitle.value;
+                                // Admin view also refreshes to show the deployed content as active
+                                await loadQuestions(true);
+                            } else {
+                                alert('失敗: ' + res.message);
+                            }
+                        } catch (e) {
+                            alert('Error: ' + e);
+                        } finally {
+                            isLoading.value = false;
+                        }
+                    };
 
                     // Diagram Logic
                     const loadReferenceDiagrams = async () => {
@@ -1095,6 +1206,7 @@
                                 localStorage.removeItem('elec_test_answers');
                                 localStorage.removeItem('elec_test_session_id');
                                 localStorage.removeItem('elec_test_student_name');
+                                localStorage.removeItem('elec_test_questions_v2');
                             } else {
                                 throw new Error(res.message);
                             }
@@ -1118,7 +1230,43 @@
                         localStorage.removeItem('elec_test_answers');
                         localStorage.removeItem('elec_test_session_id');
                         localStorage.removeItem('elec_test_student_name');
+                        localStorage.removeItem('elec_test_questions_v2');
                         switchView('landing');
+                    };
+
+                    const reloadExam = async () => {
+                        if (!confirm('最新の問題を取得して最初からやり直しますか？\n現在の回答内容はすべて消去されます。')) return;
+
+                        // Reset local state but keep the view
+                        answers.value = {};
+                        currentQuestionIndex.value = 0;
+                        testResult.value = null;
+                        isGradingFailed.value = false;
+
+                        // Clear storage to prevent auto-restore of old answers
+                        localStorage.removeItem('elec_test_answers');
+                        // We keep the name (studentName.value) for convenience
+                        // But we should probably generate a new session ID if they register again?
+                        // For now, let's just reload content. If they submit, it uses existing ID or creates new one?
+                        // The submit function uses existing sessionId.
+                        // Ideally we should re-register if the pattern changed? 
+                        // Let's just reload the questions. The session ID tracks the student's "login", 
+                        // changing the question set mid-session is slightly weird for logging but acceptable for this request.
+                        // Actually, to be safe, let's keep the session ID. The score table will just update.
+
+                        await loadQuestions(false, true);
+
+                        // Check if pattern changed
+                        // loadQuestions updates 'questions' ref.
+                        // Also update currentDeployedPattern
+                        alert('最新の問題を読み込みました。');
+                    };
+
+                    const quitExam = () => {
+                        if (!confirm('採点せずに試験を終了しますか？\n回答内容はすべて消去され、トップ画面に戻ります。')) return;
+
+                        // Clear all exam state
+                        resetTest();
                     };
 
                     // --- Auto Save Logic ---
@@ -1473,12 +1621,12 @@
                         renderMath, downloadAnswersCSV, downloadResultsCSV,
                         // Pattern Management
                         patternTitle, selectedPatternTitle, savedPatterns, formatDate,
-                        savePattern, loadPattern, deletePattern, currentDeployedPattern, createNewPattern,
+                        savePattern, loadPattern, deletePattern, deployPattern, currentDeployedPattern, createNewPattern,
                         // Diagram Management
                         referenceDiagrams, showDiagramManager, showDiagramViewer, showDiagramList, currentDiagramUrl,
                         loadReferenceDiagrams, saveDiagramsList, addDiagram, removeDiagram, viewDiagram,
                         // Candidate Management
-                        showNameModal, studentName, nameError, startExam, cancelExam
+                        showNameModal, studentName, nameError, startExam, cancelExam, reloadExam, quitExam
                     }
                 }
             }).mount('#app');

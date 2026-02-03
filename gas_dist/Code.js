@@ -78,11 +78,10 @@ function saveQuestions(questions, patternTitle) {
                 q.criteria || '',
                 q.subQuestions ? JSON.stringify(q.subQuestions) : '',
                 q.modelAnswer || '',
-                q.modelAnswer || '',
                 q.referenceDiagramId || '',
                 (q.isPublished === false) ? 'FALSE' : 'TRUE' // Explicitly save as string to prevent type ambiguity
             ]);
-            sheet.getRange(2, 1, rows.length, 9).setValues(rows);
+            sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
         }
 
         SpreadsheetApp.flush();
@@ -227,6 +226,27 @@ function deletePattern(title) {
         return { success: false, message: 'パターンが見つかりませんでした。' };
     } catch (e) {
         return { success: false, message: '削除エラー: ' + e.toString() };
+    }
+}
+
+/**
+ * パターンの公開 (Deploy)
+ * 指定されたパターンの問題をQuestionsシートに展開し、現在の試験問題とする
+ */
+function deployPattern(title) {
+    try {
+        // パターンを取得
+        const result = getPattern(title);
+        if (!result.success) {
+            return result;
+        }
+
+        // 取得した問題を保存（これを現在の問題とする）
+        // saveQuestions内部で CURRENT_PATTERN_TITLE の更新も行われる
+        return saveQuestions(result.questions, title);
+
+    } catch (e) {
+        return { success: false, message: '公開エラー: ' + e.toString() };
     }
 }
 
@@ -522,22 +542,22 @@ function _gradeWithGemini(questions, answers) {
     const requests = chunks.map((chunk, i) => {
         // プロンプト構築
         let promptText = `
-あなたは電気工学の専門家かつ厳格な採点者です。以下の試験問題に対する学生の回答を一括で採点してください。
-各問題に対して、必ず JSON 配列の形式で [index, score, reason] を返してください。
+    あなたは電気工学の専門家かつ厳格な採点者です。以下の試験問題に対する学生の回答を一括で採点してください。
+    各問題に対して、必ず JSON 配列の形式で [index, score, reason] を返してください。
 
-【採点対象リスト】
-`;
+    【採点対象リスト】
+    `;
         chunk.forEach((p, index) => {
             const ans = typeof p.studentAnswer === 'string' ? p.studentAnswer : JSON.stringify(p.studentAnswer);
             promptText += `
----
-ID: ${index}
-[問題ID: ${p.qId}${p.sqId ? '_' + p.sqId : ''}]
-問題文: ${p.text}
-配点: ${p.points}点
-採点基準: ${p.criteria}
-学生の回答: ${ans || '(未回答)'}
-`;
+    ---
+    ID: ${index}
+    [問題ID: ${p.qId}${p.sqId ? '_' + p.sqId : ''}]
+    問題文: ${p.text}
+    配点: ${p.points}点
+    採点基準: ${p.criteria}
+    学生の回答: ${ans || '(未回答)'}
+    `;
         });
 
         // リクエストペイロード (Strict JSON Mode)
