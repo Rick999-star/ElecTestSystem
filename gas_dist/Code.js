@@ -403,13 +403,14 @@ function saveTemporaryAnswers(answers, sessionId) {
  * @param {string} sessionId - セッションID (registerCandidateで取得)
  */
 function submitAnswers(answers, sessionId) {
+    const startTime = Date.now(); // 実行開始時刻を記録
     try {
         // 採点時は全問題(非公開含む)を取得して、回答が存在すれば採点できるようにする
         // (ユーザーが古い画面を開いたまま回答した場合などの整合性のため)
         const questions = getQuestions(true);
 
         // 1. Gemini APIによる採点 (各問題ごと)
-        const gradingResults = _gradeWithGemini(questions, answers);
+        const gradingResults = _gradeWithGemini(questions, answers, startTime);
         const totalScore = gradingResults.reduce((sum, r) => sum + r.score, 0);
 
         // 2. 点数表の更新 (sessionIdがある場合)
@@ -420,10 +421,15 @@ function submitAnswers(answers, sessionId) {
         // 3. 詳細ログをスプレッドシートに保存 (バックアップ/詳細分析用)
         _saveResponseLog(questions, answers, gradingResults, totalScore, sessionId);
 
+        // タイムアウト警告のチェック
+        const isTimeout = (Date.now() - startTime) > 230000;
+        const message = isTimeout ? '時間の制約により、一部の採点が完了しなかった可能性があります。' : undefined;
+
         return {
             success: true,
             totalScore: totalScore,
-            results: gradingResults
+            results: gradingResults,
+            warning: message
         };
 
     } catch (e) {
@@ -470,7 +476,7 @@ function _updateScoreTable(sessionId, score) {
 /**
  * Gemini APIと通信して採点を行う内部関数 (並列処理版)
  */
-function _gradeWithGemini(questions, answers) {
+function _gradeWithGemini(questions, answers, startTime) {
     const apiKey = PropertiesService.getScriptProperties().getProperty(SCRIPT_PROP_KEY_GEMINI_API_KEY);
 
     // APIキーがない場合はモック採点
@@ -542,22 +548,22 @@ function _gradeWithGemini(questions, answers) {
     const requests = chunks.map((chunk, i) => {
         // プロンプト構築
         let promptText = `
-    あなたは電気工学の専門家かつ厳格な採点者です。以下の試験問題に対する学生の回答を一括で採点してください。
-    各問題に対して、必ず JSON 配列の形式で [index, score, reason] を返してください。
+        あなたは電気工学の専門家かつ厳格な採点者です。以下の試験問題に対する学生の回答を一括で採点してください。
+        各問題に対して、必ず JSON 配列の形式で [index, score, reason] を返してください。
 
-    【採点対象リスト】
-    `;
+        【採点対象リスト】
+        `;
         chunk.forEach((p, index) => {
             const ans = typeof p.studentAnswer === 'string' ? p.studentAnswer : JSON.stringify(p.studentAnswer);
             promptText += `
-    ---
-    ID: ${index}
-    [問題ID: ${p.qId}${p.sqId ? '_' + p.sqId : ''}]
-    問題文: ${p.text}
-    配点: ${p.points}点
-    採点基準: ${p.criteria}
-    学生の回答: ${ans || '(未回答)'}
-    `;
+        ---
+        ID: ${index}
+        [問題ID: ${p.qId}${p.sqId ? '_' + p.sqId : ''}]
+        問題文: ${p.text}
+        配点: ${p.points}点
+        採点基準: ${p.criteria}
+        学生の回答: ${ans || '(未回答)'}
+        `;
         });
 
         // リクエストペイロード (Strict JSON Mode)
@@ -587,10 +593,10 @@ function _gradeWithGemini(questions, answers) {
         };
     });
 
-    // リトライ付き並列実行
+    // リトライ付き並列実行 (タイムアウト監視付き)
     let responses = [];
     try {
-        responses = _fetchAllWithRetry(requests);
+        responses = _fetchAllWithRetry(requests, startTime);
     } catch (e) {
         console.error("Critical Grading Error:", e);
         return problemList.map(p => ({
@@ -687,16 +693,24 @@ function _gradeWithGemini(questions, answers) {
 }
 
 /**
- * UrlFetchApp.fetchAll ラッパー: 指数バックオフによるリトライ実装
+ * UrlFetchApp.fetchAll ラッパー: 指数バックオフによるリトライ実装 + タイムアウト監視
  * @param {Array} requests - UrlFetchAppのリクエストオブジェクト配列
+ * @param {number} startTime - 実行開始時刻 (Date.now())
  * @param {number} maxRetries - 最大リトライ回数 (デフォルト3)
  * @return {Array} responses - UrlFetchApp.HTTPResponseの配列 (失敗時はnullが入る可能性あり)
  */
-function _fetchAllWithRetry(requests, maxRetries = 3) {
+function _fetchAllWithRetry(requests, startTime, maxRetries = 3) {
     let results = new Array(requests.length).fill(null);
     let pendingIndices = requests.map((_, i) => i);
+    const TIME_LIMIT_MS = 230000; // 3分50秒 (クライアント側300秒に対して十分な余裕を持つ)
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        // タイムアウトチェック
+        if (startTime && (Date.now() - startTime) > TIME_LIMIT_MS) {
+            console.warn("Execution time limit approaching. Aborting further retries.");
+            break;
+        }
+
         if (pendingIndices.length === 0) break;
 
         const currentRequests = pendingIndices.map(i => requests[i]);
@@ -715,8 +729,6 @@ function _fetchAllWithRetry(requests, maxRetries = 3) {
 
         if (fetchError) {
             // fetchAll自体が落ちた場合 (DNSエラー等)、全件リトライ対象
-            // ただし、fetchAllは全か無かなので、個別のステータスコードは不明。
-            // ネットワークエラーとみなして全件リトライ。
             nextPending.push(...pendingIndices);
         } else {
             // 個別のレスポンスをチェック

@@ -1202,6 +1202,11 @@
                             if (res.success) {
                                 testResult.value = res;
                                 isGradingFailed.value = false;
+
+                                if (res.warning) {
+                                    alert('【注意】\n' + res.warning + '\n\n採点が一部完了していませんが、結果を表示します。');
+                                }
+
                                 // 成功したら一時保存クリア (Local Storage)
                                 localStorage.removeItem('elec_test_answers');
                                 localStorage.removeItem('elec_test_session_id');
@@ -1574,8 +1579,8 @@
                     };
 
                     const renderMath = (text) => {
-                        if (!text) return '';
-                        let temp = text;
+                        if (text === null || text === undefined) return '';
+                        let temp = String(text); // Ensure string for numbers
                         const placeholders = [];
                         const push = (html) => {
                             placeholders.push(html);
